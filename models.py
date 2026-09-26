@@ -47,6 +47,7 @@ class Disc(db.Model):
     condition = db.Column(db.String(30), nullable=True)
     in_bag = db.Column(db.Boolean, default=True)
     notes = db.Column(db.Text, nullable=True)
+    photo_filename = db.Column(db.String(255), nullable=True)
 
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 

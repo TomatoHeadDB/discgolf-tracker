@@ -1,3 +1,64 @@
+{% macro render_discs(discs, categories, empty_message) %}
+  {% if not discs %}
+    <div class="empty-state">
+      <p>{{ empty_message }}</p>
+    </div>
+  {% endif %}
+  {% for cat in categories %}
+    {% set cat_discs = discs | selectattr('category', 'equalto', cat) | list %}
+    {% if cat_discs %}
+    <section class="disc-section">
+      <h2>{{ cat }}</h2>
+      <div class="disc-grid">
+        {% for disc in cat_discs %}
+        <div class="disc-card" style="--disc-color: {{ disc.color }}">
+          <div class="flip-card">
+            <div class="flip-card-inner">
+              <div class="flip-face flip-front">
+                {% if disc.photo_filename %}
+                <img class="disc-photo-thumb" src="{{ url_for('disc_photo', disc_id=disc.id) }}" alt="{{ disc.name }}">
+                {% else %}
+                <div class="disc-photo-placeholder" style="background: {{ disc.color }}">🥏</div>
+                {% endif %}
+              </div>
+              <div class="flip-face flip-back">
+                <canvas class="mini-flight"
+                        data-speed="{{ disc.speed }}"
+                        data-glide="{{ disc.glide }}"
+                        data-turn="{{ disc.turn }}"
+                        data-fade="{{ disc.fade }}"
+                        data-color="{{ disc.color }}"
+                        data-weight="{{ disc.weight_grams or '' }}"
+                        width="160" height="200"></canvas>
+              </div>
+            </div>
+          </div>
+          <div class="disc-card-body">
+            <h3>{{ disc.name }}</h3>
+            <p class="disc-manufacturer">{{ disc.manufacturer or "—" }}</p>
+            <p class="flight-numbers">
+              <span title="Speed">S {{ disc.speed|round(1) }}</span>
+              <span title="Glide">G {{ disc.glide|round(1) }}</span>
+              <span title="Turn">T {{ disc.turn|round(1) }}</span>
+              <span title="Fade">F {{ disc.fade|round(1) }}</span>
+            </p>
+            <div class="disc-card-actions">
+              <a href="{{ url_for('flight_view', disc_id=disc.id) }}" class="btn btn-small">Flight</a>
+              <a href="{{ url_for('edit_disc', disc_id=disc.id) }}" class="btn btn-small">Edit</a>
+              <form method="POST" action="{{ url_for('delete_disc', disc_id=disc.id) }}"
+                    onsubmit="return confirm('Remove {{ disc.name }} from your bag?');">
+                <button type="submit" class="btn btn-small btn-danger">Delete</button>
+              </form>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+  {% endfor %}
+{% endmacro %}
+
 {% extends "base.html" %}
 {% block title %}My Bag — Disc Golf Tracker{% endblock %}
 {% block content %}
@@ -11,50 +72,22 @@
     <p>No discs yet. Add your first one to see its flight path.</p>
     <a href="{{ url_for('new_disc') }}" class="btn btn-primary">+ Add Disc</a>
   </div>
-{% endif %}
+{% else %}
+  {% set in_bag_discs = discs | selectattr('in_bag') | list %}
+  {% set out_bag_discs = discs | rejectattr('in_bag') | list %}
 
-{% for cat in categories %}
-  {% set cat_discs = discs | selectattr('category', 'equalto', cat) | list %}
-  {% if cat_discs %}
-  <section class="disc-section">
-    <h2>{{ cat }}</h2>
-    <div class="disc-grid">
-      {% for disc in cat_discs %}
-      <div class="disc-card" style="--disc-color: {{ disc.color }}">
-        <div class="disc-card-top">
-          <canvas class="mini-flight"
-                  data-speed="{{ disc.speed }}"
-                  data-glide="{{ disc.glide }}"
-                  data-turn="{{ disc.turn }}"
-                  data-fade="{{ disc.fade }}"
-                  data-color="{{ disc.color }}"
-                  data-weight="{{ disc.weight_grams or '' }}"
-                  width="160" height="200"></canvas>
-        </div>
-        <div class="disc-card-body">
-          <h3>{{ disc.name }}</h3>
-          <p class="disc-manufacturer">{{ disc.manufacturer or "—" }}{% if not disc.in_bag %} · <span class="badge-out">not in bag</span>{% endif %}</p>
-          <p class="flight-numbers">
-            <span title="Speed">S {{ disc.speed|round(1) }}</span>
-            <span title="Glide">G {{ disc.glide|round(1) }}</span>
-            <span title="Turn">T {{ disc.turn|round(1) }}</span>
-            <span title="Fade">F {{ disc.fade|round(1) }}</span>
-          </p>
-          <div class="disc-card-actions">
-            <a href="{{ url_for('flight_view', disc_id=disc.id) }}" class="btn btn-small">Flight</a>
-            <a href="{{ url_for('edit_disc', disc_id=disc.id) }}" class="btn btn-small">Edit</a>
-            <form method="POST" action="{{ url_for('delete_disc', disc_id=disc.id) }}"
-                  onsubmit="return confirm('Remove {{ disc.name }} from your bag?');">
-              <button type="submit" class="btn btn-small btn-danger">Delete</button>
-            </form>
-          </div>
-        </div>
-      </div>
-      {% endfor %}
-    </div>
-  </section>
-  {% endif %}
-{% endfor %}
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="in-bag">In Bag ({{ in_bag_discs|length }})</button>
+    <button class="tab-btn" data-tab="not-in-bag">Not In Bag ({{ out_bag_discs|length }})</button>
+  </div>
+
+  <div class="tab-panel active" id="tab-in-bag">
+    {{ render_discs(in_bag_discs, categories, "Nothing currently in your bag.") }}
+  </div>
+  <div class="tab-panel" id="tab-not-in-bag">
+    {{ render_discs(out_bag_discs, categories, "Nothing marked as out of your bag.") }}
+  </div>
+{% endif %}
 
 <script src="{{ url_for('static', filename='js/flightpath.js') }}"></script>
 <script>
@@ -66,6 +99,21 @@
       fade: parseFloat(canvas.dataset.fade),
       color: canvas.dataset.color,
       weight_grams: canvas.dataset.weight ? parseFloat(canvas.dataset.weight) : null
+    });
+  });
+
+  document.querySelectorAll('.flip-card').forEach(function (card) {
+    card.addEventListener('click', function () {
+      card.classList.toggle('flipped');
+    });
+  });
+
+  document.querySelectorAll('.tab-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
     });
   });
 </script>

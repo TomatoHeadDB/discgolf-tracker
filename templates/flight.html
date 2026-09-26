@@ -8,6 +8,9 @@
 
 <div class="flight-page">
   <div class="flight-controls">
+    {% if disc.photo_filename %}
+    <img class="current-photo-full" src="{{ url_for('disc_photo', disc_id=disc.id) }}" alt="{{ disc.name }}">
+    {% endif %}
     <p class="flight-numbers-big">
       <span>Speed <strong>{{ disc.speed }}</strong></span>
       <span>Glide <strong>{{ disc.glide }}</strong></span>

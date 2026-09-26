@@ -7,13 +7,30 @@
 </div>
 
 <div class="form-layout">
-  <form method="POST" class="disc-form">
+  <form method="POST" class="disc-form" enctype="multipart/form-data">
     <label>Name
       <input type="text" name="name" required value="{{ disc.name if disc else '' }}">
     </label>
     <label>Manufacturer
       <input type="text" name="manufacturer" value="{{ disc.manufacturer if disc else '' }}" placeholder="Innova, Discraft, MVP...">
     </label>
+
+    <label>Photo
+      <input type="file" name="photo" accept="image/*" capture="environment" id="photo-input">
+    </label>
+    {% if disc and disc.photo_filename %}
+    <div class="current-photo">
+      <img src="{{ url_for('disc_photo', disc_id=disc.id) }}" alt="{{ disc.name }}">
+      <label class="checkbox-label">
+        <input type="checkbox" name="remove_photo">
+        Remove this photo
+      </label>
+    </div>
+    {% endif %}
+    <div class="photo-preview-wrap" id="photo-preview-wrap" style="display:none;">
+      <img id="photo-preview" alt="Selected photo preview">
+    </div>
+
     <label>Category
       <select name="category">
         {% for c in categories %}
@@ -95,5 +112,22 @@
     form[name].addEventListener('input', redraw);
   });
   redraw();
+
+  const photoInput = document.getElementById('photo-input');
+  const previewWrap = document.getElementById('photo-preview-wrap');
+  const previewImg = document.getElementById('photo-preview');
+  photoInput.addEventListener('change', function () {
+    const file = photoInput.files[0];
+    if (!file) {
+      previewWrap.style.display = 'none';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = function (e) {
+      previewImg.src = e.target.result;
+      previewWrap.style.display = 'block';
+    };
+    reader.readAsDataURL(file);
+  });
 </script>
 {% endblock %}

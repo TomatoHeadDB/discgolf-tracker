@@ -1,5 +1,16 @@
 import os
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, abort
+import uuid
+from flask import (
+    Flask,
+    render_template,
+    request,
+    redirect,
+    url_for,
+    flash,
+    jsonify,
+    abort,
+    send_from_directory,
+)
 from flask_login import (
     LoginManager,
     login_user,
@@ -8,12 +19,15 @@ from flask_login import (
     current_user,
 )
 from dotenv import load_dotenv
+from werkzeug.utils import secure_filename
 
 from models import db, User, Disc
 
 load_dotenv()
 
 CATEGORIES = ["Putter", "Midrange", "Fairway Driver", "Distance Driver"]
+ALLOWED_PHOTO_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
+MAX_PHOTO_BYTES = 8 * 1024 * 1024  # 8 MB
 
 
 def create_app():
@@ -25,6 +39,10 @@ def create_app():
         "DATABASE_URL", f"sqlite:///{os.path.join(basedir, 'instance', 'discgolf.db')}"
     )
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+    app.config["MAX_CONTENT_LENGTH"] = MAX_PHOTO_BYTES
+
+    upload_folder = os.path.join(basedir, "instance", "uploads")
+    app.config["UPLOAD_FOLDER"] = upload_folder
 
     db.init_app(app)
 
@@ -38,6 +56,7 @@ def create_app():
 
     with app.app_context():
         os.makedirs(os.path.join(basedir, "instance"), exist_ok=True)
+        os.makedirs(upload_folder, exist_ok=True)
         db.create_all()
 
     # ---------- Auth ----------
@@ -120,6 +139,7 @@ def create_app():
     def new_disc():
         if request.method == "POST":
             disc = _disc_from_form(Disc(user_id=current_user.id))
+            _handle_photo_upload(disc)
             db.session.add(disc)
             db.session.commit()
             flash(f'Added "{disc.name}" to your bag.', "success")
@@ -134,6 +154,10 @@ def create_app():
         disc = _get_owned_disc(disc_id)
         if request.method == "POST":
             _disc_from_form(disc)
+            if request.form.get("remove_photo") == "on":
+                _delete_photo_file(disc.photo_filename)
+                disc.photo_filename = None
+            _handle_photo_upload(disc)
             db.session.commit()
             flash(f'Updated "{disc.name}".', "success")
             return redirect(url_for("dashboard"))
@@ -145,10 +169,19 @@ def create_app():
     @login_required
     def delete_disc(disc_id):
         disc = _get_owned_disc(disc_id)
+        _delete_photo_file(disc.photo_filename)
         db.session.delete(disc)
         db.session.commit()
         flash(f'Removed "{disc.name}".', "success")
         return redirect(url_for("dashboard"))
+
+    @app.route("/discs/<int:disc_id>/photo")
+    @login_required
+    def disc_photo(disc_id):
+        disc = _get_owned_disc(disc_id)
+        if not disc.photo_filename:
+            abort(404)
+        return send_from_directory(app.config["UPLOAD_FOLDER"], disc.photo_filename)
 
     @app.route("/discs/<int:disc_id>/flight")
     @login_required
@@ -177,6 +210,35 @@ def create_app():
         if disc is None or disc.user_id != current_user.id:
             abort(404)
         return disc
+
+    def _allowed_photo(filename):
+        return (
+            "." in filename
+            and filename.rsplit(".", 1)[1].lower() in ALLOWED_PHOTO_EXTENSIONS
+        )
+
+    def _delete_photo_file(filename):
+        if not filename:
+            return
+        path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+        if os.path.exists(path):
+            os.remove(path)
+
+    def _handle_photo_upload(disc):
+        file = request.files.get("photo")
+        if not file or not file.filename:
+            return
+        if not _allowed_photo(file.filename):
+            flash(
+                "Photo not saved: use a JPG, PNG, or WEBP image.", "error"
+            )
+            return
+        ext = secure_filename(file.filename).rsplit(".", 1)[1].lower()
+        new_filename = f"{uuid.uuid4().hex}.{ext}"
+        file.save(os.path.join(app.config["UPLOAD_FOLDER"], new_filename))
+        # Replacing an existing photo — clean up the old file.
+        _delete_photo_file(disc.photo_filename)
+        disc.photo_filename = new_filename
 
     def _disc_from_form(disc: Disc) -> Disc:
         def f(field, default=0.0):
