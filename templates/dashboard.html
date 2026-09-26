@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}My Bag — Disc Golf Tracker{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>My Bag</h1>
+  <a href="{{ url_for('new_disc') }}" class="btn btn-primary">+ Add Disc</a>
+</div>
+
+{% if not discs %}
+  <div class="empty-state">
+    <p>No discs yet. Add your first one to see its flight path.</p>
+    <a href="{{ url_for('new_disc') }}" class="btn btn-primary">+ Add Disc</a>
+  </div>
+{% endif %}
+
+{% for cat in categories %}
+  {% set cat_discs = discs | selectattr('category', 'equalto', cat) | list %}
+  {% if cat_discs %}
+  <section class="disc-section">
+    <h2>{{ cat }}</h2>
+    <div class="disc-grid">
+      {% for disc in cat_discs %}
+      <div class="disc-card" style="--disc-color: {{ disc.color }}">
+        <div class="disc-card-top">
+          <canvas class="mini-flight"
+                  data-speed="{{ disc.speed }}"
+                  data-glide="{{ disc.glide }}"
+                  data-turn="{{ disc.turn }}"
+                  data-fade="{{ disc.fade }}"
+                  data-color="{{ disc.color }}"
+                  width="160" height="200"></canvas>
+        </div>
+        <div class="disc-card-body">
+          <h3>{{ disc.name }}</h3>
+          <p class="disc-manufacturer">{{ disc.manufacturer or "—" }}{% if not disc.in_bag %} · <span class="badge-out">not in bag</span>{% endif %}</p>
+          <p class="flight-numbers">
+            <span title="Speed">S {{ disc.speed|round(1) }}</span>
+            <span title="Glide">G {{ disc.glide|round(1) }}</span>
+            <span title="Turn">T {{ disc.turn|round(1) }}</span>
+            <span title="Fade">F {{ disc.fade|round(1) }}</span>
+          </p>
+          <div class="disc-card-actions">
+            <a href="{{ url_for('flight_view', disc_id=disc.id) }}" class="btn btn-small">Flight</a>
+            <a href="{{ url_for('edit_disc', disc_id=disc.id) }}" class="btn btn-small">Edit</a>
+            <form method="POST" action="{{ url_for('delete_disc', disc_id=disc.id) }}"
+                  onsubmit="return confirm('Remove {{ disc.name }} from your bag?');">
+              <button type="submit" class="btn btn-small btn-danger">Delete</button>
+            </form>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+{% endfor %}
+
+<script src="{{ url_for('static', filename='js/flightpath.js') }}"></script>
+<script>
+  document.querySelectorAll('canvas.mini-flight').forEach(function (canvas) {
+    DiscFlight.drawMini(canvas, {
+      speed: parseFloat(canvas.dataset.speed),
+      glide: parseFloat(canvas.dataset.glide),
+      turn: parseFloat(canvas.dataset.turn),
+      fade: parseFloat(canvas.dataset.fade),
+      color: canvas.dataset.color
+    });
+  });
+</script>
+{% endblock %}

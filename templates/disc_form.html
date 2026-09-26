@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}{{ action }} Disc — Disc Golf Tracker{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>{{ action }} Disc</h1>
+  <a href="{{ url_for('dashboard') }}" class="btn btn-ghost">← Back to bag</a>
+</div>
+
+<div class="form-layout">
+  <form method="POST" class="disc-form">
+    <label>Name
+      <input type="text" name="name" required value="{{ disc.name if disc else '' }}">
+    </label>
+    <label>Manufacturer
+      <input type="text" name="manufacturer" value="{{ disc.manufacturer if disc else '' }}" placeholder="Innova, Discraft, MVP...">
+    </label>
+    <label>Category
+      <select name="category">
+        {% for c in categories %}
+        <option value="{{ c }}" {% if disc and disc.category == c %}selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <div class="flight-inputs">
+      <label>Speed
+        <input type="number" step="0.5" min="1" max="15" name="speed" value="{{ disc.speed if disc else 5 }}" required>
+      </label>
+      <label>Glide
+        <input type="number" step="0.5" min="1" max="7" name="glide" value="{{ disc.glide if disc else 4 }}" required>
+      </label>
+      <label>Turn
+        <input type="number" step="0.5" min="-5" max="1" name="turn" value="{{ disc.turn if disc else 0 }}" required>
+      </label>
+      <label>Fade
+        <input type="number" step="0.5" min="0" max="5" name="fade" value="{{ disc.fade if disc else 2 }}" required>
+      </label>
+    </div>
+    <p class="hint">Flight numbers are printed on the disc or on the manufacturer's page (e.g. Innova, Discraft).</p>
+
+    <label>Plastic
+      <input type="text" name="plastic" value="{{ disc.plastic if disc else '' }}" placeholder="Star, ESP, Neutron...">
+    </label>
+    <label>Color
+      <input type="color" name="color" value="{{ disc.color if disc else '#3b82f6' }}">
+    </label>
+    <label>Weight (grams)
+      <input type="number" name="weight_grams" min="100" max="200" value="{{ disc.weight_grams if disc else '' }}">
+    </label>
+    <label>Condition
+      <select name="condition">
+        {% for c in ["New", "Great", "Good", "Worn", "Beat In"] %}
+        <option value="{{ c }}" {% if disc and disc.condition == c %}selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="checkbox-label">
+      <input type="checkbox" name="in_bag" {% if disc is none or disc.in_bag %}checked{% endif %}>
+      Currently in my bag
+    </label>
+    <label>Notes
+      <textarea name="notes" rows="3">{{ disc.notes if disc else '' }}</textarea>
+    </label>
+
+    <button type="submit" class="btn btn-primary">{{ action }} Disc</button>
+  </form>
+
+  <div class="live-preview">
+    <h3>Flight Preview</h3>
+    <canvas id="preview-canvas" width="320" height="440"></canvas>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/flightpath.js') }}"></script>
+<script>
+  const form = document.querySelector('.disc-form');
+  const canvas = document.getElementById('preview-canvas');
+
+  function readFlightNumbers() {
+    return {
+      speed: parseFloat(form.speed.value) || 0,
+      glide: parseFloat(form.glide.value) || 0,
+      turn: parseFloat(form.turn.value) || 0,
+      fade: parseFloat(form.fade.value) || 0,
+      color: form.color.value || '#3b82f6'
+    };
+  }
+
+  function redraw() {
+    DiscFlight.drawFull(canvas, readFlightNumbers(), { throwStyle: 'RHBH' });
+  }
+
+  ['speed', 'glide', 'turn', 'fade', 'color'].forEach(function (name) {
+    form[name].addEventListener('input', redraw);
+  });
+  redraw();
+</script>
+{% endblock %}

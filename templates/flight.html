@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}{{ disc.name }} — Flight Path{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>{{ disc.name }}</h1>
+  <a href="{{ url_for('dashboard') }}" class="btn btn-ghost">← Back to bag</a>
+</div>
+
+<div class="flight-page">
+  <div class="flight-controls">
+    <p class="flight-numbers-big">
+      <span>Speed <strong>{{ disc.speed }}</strong></span>
+      <span>Glide <strong>{{ disc.glide }}</strong></span>
+      <span>Turn <strong>{{ disc.turn }}</strong></span>
+      <span>Fade <strong>{{ disc.fade }}</strong></span>
+    </p>
+
+    <label>Throw style
+      <select id="throw-style">
+        <option value="RHBH">Right-Hand Backhand (RHBH)</option>
+        <option value="RHFH">Right-Hand Forehand (RHFH)</option>
+        <option value="LHBH">Left-Hand Backhand (LHBH)</option>
+        <option value="LHFH">Left-Hand Forehand (LHFH)</option>
+      </select>
+    </label>
+
+    <label>Throw power: <span id="power-label">100%</span>
+      <input type="range" id="power" min="0.6" max="1.15" step="0.01" value="1">
+    </label>
+
+    <a href="{{ url_for('edit_disc', disc_id=disc.id) }}" class="btn btn-small">Edit flight numbers</a>
+  </div>
+
+  <div class="flight-canvas-wrap">
+    <canvas id="flight-canvas" width="480" height="640"></canvas>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/flightpath.js') }}"></script>
+<script>
+  const discData = {
+    speed: {{ disc.speed }},
+    glide: {{ disc.glide }},
+    turn: {{ disc.turn }},
+    fade: {{ disc.fade }},
+    color: "{{ disc.color }}"
+  };
+  const canvas = document.getElementById('flight-canvas');
+  const styleSelect = document.getElementById('throw-style');
+  const powerInput = document.getElementById('power');
+  const powerLabel = document.getElementById('power-label');
+
+  function redraw() {
+    powerLabel.textContent = Math.round(powerInput.value * 100) + '%';
+    DiscFlight.drawFull(canvas, discData, {
+      throwStyle: styleSelect.value,
+      power: parseFloat(powerInput.value)
+    });
+  }
+
+  styleSelect.addEventListener('change', redraw);
+  powerInput.addEventListener('input', redraw);
+  redraw();
+</script>
+{% endblock %}
