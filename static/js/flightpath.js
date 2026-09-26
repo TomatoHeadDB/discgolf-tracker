@@ -29,26 +29,58 @@
 
     const maxDistance = (150 + speed * 18 + glide * 10) * power;
 
-    const turnScale = 18;
-    const fadeScale = 22;
+    // Total lateral distance (feet) a disc with turn=-5 / fade=5 would end
+    // up displaced by, at the very end of the flight. Each effect's
+    // contribution is cumulative and permanent — it does not unwind later,
+    // so the two only cancel out when a disc's own numbers happen to
+    // balance (a "stable" disc), never because the model forces it.
+    const turnMaxOffset = 18 * power;
+    const fadeMaxOffset = 22 * power;
 
-    const points = [];
     const STEPS = 60;
+
+    // Turn happens during the early-to-mid, high-speed part of the flight.
+    // Fly essentially straight for the first ~5%, then drift, tapering off
+    // by ~65% of the way through.
+    function turnRate(t) {
+      if (t < 0.05 || t > 0.65) return 0;
+      return Math.sin(Math.PI * ((t - 0.05) / 0.6));
+    }
+    // Fade builds as the disc slows down in the back half of the flight,
+    // and keeps increasing all the way to landing (the "hook").
+    function fadeRate(t) {
+      if (t < 0.35) return 0;
+      return Math.pow((t - 0.35) / 0.65, 1.6);
+    }
+
+    // Precompute normalized cumulative weights so that, however the rate
+    // curves above are shaped, the total contribution at t=1 works out to
+    // exactly turnMaxOffset / fadeMaxOffset (scaled by the disc's numbers).
+    const rawTurn = [];
+    const rawFade = [];
     for (let i = 0; i <= STEPS; i++) {
       const t = i / STEPS;
+      rawTurn.push(turnRate(t));
+      rawFade.push(fadeRate(t));
+    }
+    const sumTurn = rawTurn.reduce((a, b) => a + b, 0) || 1;
+    const sumFade = rawFade.reduce((a, b) => a + b, 0) || 1;
+
+    const points = [];
+    let cumTurn = 0;
+    let cumFade = 0;
+    for (let i = 0; i <= STEPS; i++) {
+      const t = i / STEPS;
+      cumTurn += rawTurn[i] / sumTurn;
+      cumFade += rawFade[i] / sumFade;
 
       // Forward progress eases out — the disc covers ground fastest early,
       // then floats (glide) toward the end of the flight.
       const forward = maxDistance * Math.pow(t, 0.9);
 
-      // Turn: strongest in the early-to-mid flight (high speed phase).
-      const turnWeight = Math.sin(Math.PI * Math.pow(t, 0.6));
-      // Fade: builds toward the end of the flight as the disc slows down.
-      const fadeWeight = Math.pow(t, 2.2);
-
       const lateral =
         mirror *
-        (-turn * turnScale * turnWeight - fade * fadeScale * fadeWeight);
+        (-turn * turnMaxOffset * cumTurn - fade * fadeMaxOffset * cumFade);
 
       points.push({ forward, lateral });
     }
