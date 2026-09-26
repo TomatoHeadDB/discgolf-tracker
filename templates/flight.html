@@ -43,7 +43,8 @@
     glide: {{ disc.glide }},
     turn: {{ disc.turn }},
     fade: {{ disc.fade }},
-    color: "{{ disc.color }}"
+    color: "{{ disc.color }}",
+    weight_grams: {{ disc.weight_grams or 'null' }}
   };
   const canvas = document.getElementById('flight-canvas');
   const styleSelect = document.getElementById('throw-style');

@@ -10,6 +10,10 @@
  * right of the thrower for a RHBH throw).
  */
 (function (global) {
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
   const MIRROR_BY_STYLE = {
     RHBH: 1,
     LHFH: 1,
@@ -24,8 +28,21 @@
 
     const speed = disc.speed ?? 5;
     const glide = disc.glide ?? 4;
-    const turn = disc.turn ?? 0;
-    const fade = disc.fade ?? 2;
+    let turn = disc.turn ?? 0;
+    let fade = disc.fade ?? 2;
+
+    // Weight adjustment: printed flight numbers are calibrated for a
+    // "standard" max-weight disc (~175g). A lighter disc doesn't have as
+    // much mass/momentum to resist wobble, so it tends to turn a bit more
+    // and fade a bit less; a heavier disc holds its line more and fades a
+    // bit harder. Only applied when a weight was actually recorded.
+    if (disc.weight_grams) {
+      const REFERENCE_WEIGHT = 175;
+      const GRAMS_PER_STEP = 25; // grams per ~1 full flight-number step
+      const deltaSteps = (REFERENCE_WEIGHT - disc.weight_grams) / GRAMS_PER_STEP;
+      turn = clamp(turn - deltaSteps * 0.6, -5, 1);
+      fade = clamp(fade - deltaSteps * 0.4, 0, 5);
+    }
 
     const maxDistance = (150 + speed * 18 + glide * 10) * power;
 

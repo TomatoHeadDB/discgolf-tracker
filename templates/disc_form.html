@@ -82,7 +82,8 @@
       glide: parseFloat(form.glide.value) || 0,
       turn: parseFloat(form.turn.value) || 0,
       fade: parseFloat(form.fade.value) || 0,
-      color: form.color.value || '#3b82f6'
+      color: form.color.value || '#3b82f6',
+      weight_grams: form.weight_grams.value ? parseFloat(form.weight_grams.value) : null
     };
   }
 
@@ -90,7 +91,7 @@
     DiscFlight.drawFull(canvas, readFlightNumbers(), { throwStyle: 'RHBH' });
   }
 
-  ['speed', 'glide', 'turn', 'fade', 'color'].forEach(function (name) {
+  ['speed', 'glide', 'turn', 'fade', 'color', 'weight_grams'].forEach(function (name) {
     form[name].addEventListener('input', redraw);
   });
   redraw();

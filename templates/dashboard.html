@@ -28,6 +28,7 @@
                   data-turn="{{ disc.turn }}"
                   data-fade="{{ disc.fade }}"
                   data-color="{{ disc.color }}"
+                  data-weight="{{ disc.weight_grams or '' }}"
                   width="160" height="200"></canvas>
         </div>
         <div class="disc-card-body">
@@ -63,7 +64,8 @@
       glide: parseFloat(canvas.dataset.glide),
       turn: parseFloat(canvas.dataset.turn),
       fade: parseFloat(canvas.dataset.fade),
-      color: canvas.dataset.color
+      color: canvas.dataset.color,
+      weight_grams: canvas.dataset.weight ? parseFloat(canvas.dataset.weight) : null
     });
   });
 </script>
