@@ -57,17 +57,17 @@
     const STEPS = 60;
 
     // Turn happens during the early-to-mid, high-speed part of the flight.
-    // Fly essentially straight for the first ~5%, then drift, tapering off
-    // by ~65% of the way through.
+    // Fly essentially straight for roughly the first third, then drift,
+    // tapering off by about 80% of the way through.
     function turnRate(t) {
-      if (t < 0.05 || t > 0.65) return 0;
-      return Math.sin(Math.PI * ((t - 0.05) / 0.6));
+      if (t < 0.3 || t > 0.8) return 0;
+      return Math.sin(Math.PI * ((t - 0.3) / 0.5));
     }
-    // Fade builds as the disc slows down in the back half of the flight,
-    // and keeps increasing all the way to landing (the "hook").
+    // Fade builds as the disc slows down late in the flight, and keeps
+    // increasing all the way to landing (the "hook").
     function fadeRate(t) {
-      if (t < 0.35) return 0;
-      return Math.pow((t - 0.35) / 0.65, 1.6);
+      if (t < 0.55) return 0;
+      return Math.pow((t - 0.55) / 0.45, 1.6);
     }
 
     // Precompute normalized cumulative weights so that, however the rate
