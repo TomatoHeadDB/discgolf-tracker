@@ -23,8 +23,11 @@ from flask_login import (
     login_required,
     current_user,
 )
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from models import db, User, Disc, Round, RoundPlayerScore, ThrowMeasurement
 
@@ -37,6 +40,11 @@ MAX_PHOTO_BYTES = 8 * 1024 * 1024  # 8 MB
 
 def create_app():
     app = Flask(__name__)
+    # Trust the reverse proxy's headers (X-Forwarded-For, X-Forwarded-Proto)
+    # so Flask knows a request arrived over HTTPS even though the proxy
+    # talks to us over plain HTTP internally. Needed for secure cookies
+    # and correct https:// URLs to work when running behind NPM.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
     basedir = os.path.abspath(os.path.dirname(__file__))
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-change-me")
@@ -46,6 +54,15 @@ def create_app():
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["MAX_CONTENT_LENGTH"] = MAX_PHOTO_BYTES
 
+    # Only mark cookies "secure" (HTTPS-only) once actually running behind
+    # HTTPS — set FORCE_HTTPS=true in .env once your reverse proxy is live.
+    # Leaving this off breaks nothing locally over plain http://.
+    app.config["SESSION_COOKIE_SECURE"] = (
+        os.environ.get("FORCE_HTTPS", "false").lower() == "true"
+    )
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+
     upload_folder = os.path.join(basedir, "instance", "uploads")
     app.config["UPLOAD_FOLDER"] = upload_folder
 
@@ -54,6 +71,8 @@ def create_app():
     login_manager = LoginManager()
     login_manager.login_view = "login"
     login_manager.init_app(app)
+
+    limiter = Limiter(get_remote_address, app=app, default_limits=[])
 
     @login_manager.user_loader
     def load_user(user_id):
@@ -67,6 +86,7 @@ def create_app():
     # ---------- Auth ----------
 
     @app.route("/register", methods=["GET", "POST"])
+    @limiter.limit("10 per hour", methods=["POST"])
     def register():
         if current_user.is_authenticated:
             return redirect(url_for("dashboard"))
@@ -99,6 +119,7 @@ def create_app():
         return render_template("register.html")
 
     @app.route("/login", methods=["GET", "POST"])
+    @limiter.limit("8 per minute", methods=["POST"])
     def login():
         if current_user.is_authenticated:
             return redirect(url_for("dashboard"))
