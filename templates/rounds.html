@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}Rounds — Disc Golf Tracker{% endblock %}
+{% block title %}My Rounds — DiscTrack{% endblock %}
 {% block content %}
 <div class="page-header">
-  <h1>Rounds</h1>
+  <h1>My Rounds</h1>
   <a href="{{ url_for('import_rounds') }}" class="btn btn-primary">Import Scorecards</a>
 </div>
 
@@ -36,20 +36,49 @@
     </div>
   </div>
 
+  {% if stats.avg_by_course %}
+  <section class="leaderboard-section">
+    <h2>Average Score by Course</h2>
+    <table class="rounds-table sortable" id="avg-course-table">
+      <thead>
+        <tr>
+          <th data-sort-key="course">Course</th>
+          <th data-sort-key="rounds">Rounds</th>
+          <th data-sort-key="avg">Avg Score</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in stats.avg_by_course %}
+        <tr>
+          <td><a href="{{ url_for('course_detail', course_name=row.course_name) }}">{{ row.course_name }}</a></td>
+          <td data-value="{{ row.round_count }}">{{ row.round_count }}</td>
+          <td data-value="{{ row.avg_score }}">{{ row.avg_score }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+
   {% if stats.leaderboard %}
   <section class="leaderboard-section">
-    <h2>Leaderboard — Best Courses (Avg +/-)</h2>
-    <table class="rounds-table">
+    <h2>Best Courses (Avg +/-)</h2>
+    <table class="rounds-table sortable" id="leaderboard-table">
       <thead>
-        <tr><th>#</th><th>Course</th><th>Rounds</th><th>Avg +/-</th></tr>
+        <tr>
+          <th data-sort-key="rank">#</th>
+          <th data-sort-key="course">Course</th>
+          <th data-sort-key="rounds">Rounds</th>
+          <th data-sort-key="avg">Avg +/-</th>
+        </tr>
       </thead>
       <tbody>
         {% for row in stats.leaderboard %}
         <tr class="{{ 'leaderboard-top' if row.rank == 1 else '' }}">
-          <td>{{ row.rank }}</td>
-          <td>{{ row.course_name }}</td>
-          <td>{{ row.round_count }}</td>
-          <td>{{ row.avg_relative }}</td>
+          <td data-value="{{ row.rank }}">{{ row.rank }}</td>
+          <td><a href="{{ url_for('course_detail', course_name=row.course_name) }}">{{ row.course_name }}</a></td>
+          <td data-value="{{ row.round_count }}">{{ row.round_count }}</td>
+          <td data-value="{{ row.avg_relative }}">{{ row.avg_relative }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -59,28 +88,29 @@
 
   <section class="rounds-table-section">
     <h2>All Rounds</h2>
-    <table class="rounds-table">
+    <table class="rounds-table sortable" id="all-rounds-table">
       <thead>
         <tr>
-          <th>Date</th>
-          <th>Course</th>
-          <th>Layout</th>
-          <th>Score</th>
-          <th>+/-</th>
+          <th data-sort-key="date">Date</th>
+          <th data-sort-key="course">Course</th>
+          <th data-sort-key="layout">Layout</th>
+          <th data-sort-key="score">Score</th>
+          <th data-sort-key="relative">+/-</th>
           <th></th>
         </tr>
       </thead>
       <tbody>
         {% for r in rounds %}
         <tr>
-          <td>{{ r.played_at.strftime('%b %-d, %Y') }}</td>
-          <td><a href="{{ url_for('round_detail', round_id=r.id) }}">{{ r.course_name }}</a></td>
+          <td data-value="{{ r.played_at.isoformat() }}">{{ r.played_at.strftime('%b %-d, %Y') }}</td>
+          <td><a href="{{ url_for('course_detail', course_name=r.course_name) }}">{{ r.course_name }}</a></td>
           <td>{{ r.layout_name or "—" }}</td>
-          <td>{{ r.total_score }}</td>
-          <td>{{ r.relative_score if r.relative_score is not none else "—" }}</td>
+          <td data-value="{{ r.total_score }}">{{ r.total_score }}</td>
+          <td data-value="{{ r.relative_score if r.relative_score is not none else 0 }}">{{ r.relative_score if r.relative_score is not none else "—" }}</td>
           <td>
+            <a href="{{ url_for('round_detail', round_id=r.id) }}" class="btn btn-small">View</a>
             <form method="POST" action="{{ url_for('delete_round', round_id=r.id) }}"
-                  onsubmit="return confirm('Delete this round?');">
+                  onsubmit="return confirm('Delete this round?');" class="inline-form">
               <button type="submit" class="btn btn-small btn-danger">Delete</button>
             </form>
           </td>
@@ -91,10 +121,15 @@
   </section>
 
   <script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/sortable.js') }}"></script>
   <script>
     const roundsData = {{ rounds_json | safe }};
     RoundCharts.drawScoreTrend(document.getElementById('trend-chart'), roundsData);
     RoundCharts.drawAvgByCourse(document.getElementById('course-chart'), {{ stats.avg_by_course | tojson }});
+
+    document.querySelectorAll('table.sortable').forEach(function (t) {
+      SortableTable.enable(t);
+    });
   </script>
 {% endif %}
 {% endblock %}

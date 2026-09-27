@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Social — DiscTrack{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Social</h1>
+</div>
+
+<div class="social-search">
+  <form method="GET">
+    <input type="text" name="q" value="{{ search_query }}" placeholder="Search by username...">
+    <button type="submit" class="btn btn-primary">Search</button>
+  </form>
+  {% if search_query %}
+    {% if not search_results %}
+    <p class="hint">No users found matching "{{ search_query }}".</p>
+    {% else %}
+    <ul class="user-result-list">
+      {% for u in search_results %}
+      <li>
+        <a href="{{ url_for('public_profile', username=u.username) }}">{{ u.username }}</a>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  {% endif %}
+</div>
+
+{% if pending_incoming %}
+<section class="social-section">
+  <h2>Connection Requests</h2>
+  <ul class="connection-list">
+    {% for c in pending_incoming %}
+    <li>
+      <a href="{{ url_for('public_profile', username=c.requester.username) }}">{{ c.requester.username }}</a>
+      <form method="POST" action="{{ url_for('respond_connection_request', connection_id=c.id) }}" class="inline-form">
+        <input type="hidden" name="decision" value="accept">
+        <button type="submit" class="btn btn-small btn-primary">Accept</button>
+      </form>
+      <form method="POST" action="{{ url_for('respond_connection_request', connection_id=c.id) }}" class="inline-form">
+        <input type="hidden" name="decision" value="decline">
+        <button type="submit" class="btn btn-small btn-ghost">Decline</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if pending_outgoing %}
+<section class="social-section">
+  <h2>Pending (Sent)</h2>
+  <ul class="connection-list">
+    {% for c in pending_outgoing %}
+    <li>
+      <a href="{{ url_for('public_profile', username=c.recipient.username) }}">{{ c.recipient.username }}</a>
+      <span class="hint">waiting for response</span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section class="social-section">
+  <h2>Your Connections</h2>
+  {% if not friends %}
+  <p class="hint">No connections yet — search for a username above to connect.</p>
+  {% else %}
+  <ul class="connection-list">
+    {% for f in friends %}
+    <li><a href="{{ url_for('public_profile', username=f.username) }}">{{ f.username }}</a></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+{% if leaderboards %}
+<section class="social-section">
+  <h2>Course Leaderboards (You + Connections)</h2>
+  {% for board in leaderboards %}
+  <div class="mini-leaderboard">
+    <h4>{{ board.course_name }}</h4>
+    <table class="rounds-table">
+      <thead><tr><th>#</th><th>Player</th><th>Rounds</th><th>Avg +/-</th></tr></thead>
+      <tbody>
+        {% for row in board.rows %}
+        <tr class="{{ 'me-row' if row.is_me else '' }}">
+          <td>{{ row.rank }}</td>
+          <td>{{ row.username }}{% if row.is_me %} <span class="you-badge">You</span>{% endif %}</td>
+          <td>{{ row.round_count }}</td>
+          <td>{{ row.avg_relative }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+{% endblock %}

@@ -29,7 +29,7 @@ from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from models import db, User, Disc, Round, RoundPlayerScore, ThrowMeasurement
+from models import db, User, Disc, Round, RoundPlayerScore, ThrowMeasurement, Connection
 
 load_dotenv()
 
@@ -141,6 +141,40 @@ def create_app():
     def logout():
         logout_user()
         return redirect(url_for("login"))
+
+    @app.route("/account", methods=["GET", "POST"])
+    @login_required
+    def account():
+        if request.method == "POST":
+            action = request.form.get("action")
+
+            if action == "update_profile":
+                current_user.udisc_display_name = (
+                    request.form.get("udisc_display_name", "").strip() or None
+                )
+                current_user.bag_public = request.form.get("bag_public") == "on"
+                db.session.commit()
+                flash("Settings updated.", "success")
+
+            elif action == "change_password":
+                current_pw = request.form.get("current_password", "")
+                new_pw = request.form.get("new_password", "")
+                confirm_pw = request.form.get("confirm_password", "")
+
+                if not current_user.check_password(current_pw):
+                    flash("Current password is incorrect.", "error")
+                elif len(new_pw) < 6:
+                    flash("New password must be at least 6 characters.", "error")
+                elif new_pw != confirm_pw:
+                    flash("New passwords do not match.", "error")
+                else:
+                    current_user.set_password(new_pw)
+                    db.session.commit()
+                    flash("Password changed.", "success")
+
+            return redirect(url_for("account"))
+
+        return render_template("account.html")
 
     # ---------- Pages ----------
 
@@ -324,6 +358,32 @@ def create_app():
             "round_detail.html", round=r, players=players, hole_scores=hole_scores
         )
 
+    @app.route("/rounds/course/<path:course_name>")
+    @login_required
+    def course_detail(course_name):
+        course_rounds = (
+            Round.query.filter_by(user_id=current_user.id, course_name=course_name)
+            .order_by(Round.played_at.desc())
+            .all()
+        )
+        if not course_rounds:
+            abort(404)
+        scores = [r.total_score for r in course_rounds]
+        rel_scores = [r.relative_score for r in course_rounds if r.relative_score is not None]
+        summary = {
+            "round_count": len(course_rounds),
+            "avg_score": round(sum(scores) / len(scores), 1),
+            "best_score": min(scores),
+            "avg_relative": round(sum(rel_scores) / len(rel_scores), 1) if rel_scores else None,
+            "best_relative": min(rel_scores) if rel_scores else None,
+        }
+        return render_template(
+            "course_detail.html",
+            course_name=course_name,
+            rounds=course_rounds,
+            summary=summary,
+        )
+
     @app.route("/rounds/import", methods=["GET", "POST"])
     @login_required
     def import_rounds():
@@ -385,6 +445,158 @@ def create_app():
         db.session.commit()
         flash("Round deleted.", "success")
         return redirect(url_for("rounds"))
+
+    # ---------- Social ----------
+
+    def _connection_between(user_a_id, user_b_id):
+        return Connection.query.filter(
+            db.or_(
+                db.and_(Connection.requester_id == user_a_id, Connection.recipient_id == user_b_id),
+                db.and_(Connection.requester_id == user_b_id, Connection.recipient_id == user_a_id),
+            )
+        ).first()
+
+    def _accepted_connections(user_id):
+        conns = Connection.query.filter(
+            Connection.status == "accepted",
+            db.or_(Connection.requester_id == user_id, Connection.recipient_id == user_id),
+        ).all()
+        friends = []
+        for c in conns:
+            friend = c.recipient if c.requester_id == user_id else c.requester
+            friends.append(friend)
+        return friends
+
+    @app.route("/social", methods=["GET"])
+    @login_required
+    def social():
+        q = request.args.get("q", "").strip()
+        search_results = []
+        if q:
+            search_results = (
+                User.query.filter(User.username.ilike(f"%{q}%"), User.id != current_user.id)
+                .limit(20)
+                .all()
+            )
+
+        pending_incoming = Connection.query.filter_by(
+            recipient_id=current_user.id, status="pending"
+        ).all()
+        pending_outgoing = Connection.query.filter_by(
+            requester_id=current_user.id, status="pending"
+        ).all()
+        friends = _accepted_connections(current_user.id)
+
+        # Combined leaderboards: for every course the current user has
+        # logged a round at, rank them against any connected friends who
+        # have also logged rounds there.
+        my_courses = {r.course_name for r in Round.query.filter_by(user_id=current_user.id).all()}
+        friend_ids = [f.id for f in friends]
+        leaderboards = []
+        for course in sorted(my_courses):
+            participants = [current_user] + friends
+            rows = []
+            for person in participants:
+                rel_scores = [
+                    r.relative_score
+                    for r in Round.query.filter_by(user_id=person.id, course_name=course).all()
+                    if r.relative_score is not None
+                ]
+                if not rel_scores:
+                    continue
+                rows.append(
+                    {
+                        "username": person.username,
+                        "is_me": person.id == current_user.id,
+                        "avg_relative": round(sum(rel_scores) / len(rel_scores), 1),
+                        "round_count": len(rel_scores),
+                    }
+                )
+            if len(rows) < 2:
+                continue  # no point showing a "leaderboard" of just yourself
+            rows.sort(key=lambda x: x["avg_relative"])
+            for i, row in enumerate(rows, start=1):
+                row["rank"] = i
+            leaderboards.append({"course_name": course, "rows": rows})
+
+        return render_template(
+            "social.html",
+            search_query=q,
+            search_results=search_results,
+            pending_incoming=pending_incoming,
+            pending_outgoing=pending_outgoing,
+            friends=friends,
+            leaderboards=leaderboards,
+        )
+
+    @app.route("/social/connect/<username>", methods=["POST"])
+    @login_required
+    def send_connection_request(username):
+        target = User.query.filter_by(username=username).first()
+        if target is None or target.id == current_user.id:
+            abort(404)
+        if _connection_between(current_user.id, target.id) is not None:
+            flash("A connection already exists with that user.", "error")
+            return redirect(url_for("social"))
+        db.session.add(Connection(requester_id=current_user.id, recipient_id=target.id))
+        db.session.commit()
+        flash(f"Connection request sent to {target.username}.", "success")
+        return redirect(url_for("social"))
+
+    @app.route("/social/respond/<int:connection_id>", methods=["POST"])
+    @login_required
+    def respond_connection_request(connection_id):
+        conn = db.session.get(Connection, connection_id)
+        if conn is None or conn.recipient_id != current_user.id:
+            abort(404)
+        decision = request.form.get("decision")
+        if decision == "accept":
+            conn.status = "accepted"
+            db.session.commit()
+            flash("Connection accepted.", "success")
+        else:
+            db.session.delete(conn)
+            db.session.commit()
+            flash("Request declined.", "success")
+        return redirect(url_for("social"))
+
+    @app.route("/social/disconnect/<int:connection_id>", methods=["POST"])
+    @login_required
+    def remove_connection(connection_id):
+        conn = db.session.get(Connection, connection_id)
+        if conn is None or current_user.id not in (conn.requester_id, conn.recipient_id):
+            abort(404)
+        db.session.delete(conn)
+        db.session.commit()
+        flash("Connection removed.", "success")
+        return redirect(url_for("social"))
+
+    @app.route("/u/<username>")
+    @login_required
+    def public_profile(username):
+        user = User.query.filter_by(username=username).first()
+        if user is None:
+            abort(404)
+        conn = _connection_between(current_user.id, user.id)
+        is_connected = conn is not None and conn.status == "accepted"
+        pending_from_me = (
+            conn is not None and conn.status == "pending" and conn.requester_id == current_user.id
+        )
+        pending_from_them = (
+            conn is not None and conn.status == "pending" and conn.recipient_id == current_user.id
+        )
+        bag = []
+        if user.id == current_user.id or user.bag_public:
+            bag = Disc.query.filter_by(user_id=user.id, in_bag=True).all()
+        return render_template(
+            "public_profile.html",
+            profile_user=user,
+            bag=bag,
+            is_connected=is_connected,
+            pending_from_me=pending_from_me,
+            pending_from_them=pending_from_them,
+            pending_connection=conn,
+        )
 
     # ---------- JSON API (used by the flight-path canvas + multi-disc compare) ----------
 

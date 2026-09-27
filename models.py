@@ -19,6 +19,7 @@ class User(UserMixin, db.Model):
     # rows belong to this user when importing a scorecard CSV that may
     # include other players too.
     udisc_display_name = db.Column(db.String(120), nullable=True)
+    bag_public = db.Column(db.Boolean, default=False, nullable=False)
 
     discs = db.relationship(
         "Disc", backref="owner", lazy=True, cascade="all, delete-orphan"
@@ -139,3 +140,21 @@ class ThrowMeasurement(db.Model):
     disc_id = db.Column(db.Integer, db.ForeignKey("discs.id"), nullable=False, index=True)
     distance_feet = db.Column(db.Float, nullable=False)
     recorded_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class Connection(db.Model):
+    """A social connection between two users. 'pending' until the
+    recipient accepts, then 'accepted' — accepted connections show up in
+    each other's combined course leaderboards and can see each other's
+    public bag."""
+
+    __tablename__ = "connections"
+
+    id = db.Column(db.Integer, primary_key=True)
+    requester_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    recipient_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    status = db.Column(db.String(20), nullable=False, default="pending")  # pending | accepted
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    requester = db.relationship("User", foreign_keys=[requester_id])
+    recipient = db.relationship("User", foreign_keys=[recipient_id])

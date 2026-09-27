@@ -1,8 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Register — Disc Golf Tracker{% endblock %}
+{% block title %}Register — DiscTrack{% endblock %}
 {% block content %}
 <div class="auth-card">
-  <h1>🥏 Create an account</h1>
+  <img src="{{ url_for('static', filename='img/logo.png') }}" alt="DiscTrack" class="auth-logo">
+  <h1>Create an account</h1>
   <form method="POST">
     <label>Username
       <input type="text" name="username" required autofocus>

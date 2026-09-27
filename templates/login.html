@@ -1,8 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Log in — Disc Golf Tracker{% endblock %}
+{% block title %}Log in — DiscTrack{% endblock %}
 {% block content %}
 <div class="auth-card">
-  <h1>🥏 Disc Golf Tracker</h1>
+  <img src="{{ url_for('static', filename='img/logo.png') }}" alt="DiscTrack" class="auth-logo">
+  <h1>DiscTrack</h1>
   <p class="subtitle">Log in to your bag</p>
   <form method="POST">
     <label>Username or email

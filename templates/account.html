@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Account Settings — DiscTrack{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Account Settings</h1>
+  <a href="{{ url_for('dashboard') }}" class="btn btn-ghost">← Back to Bag</a>
+</div>
+
+<div class="account-layout">
+  <div class="account-card">
+    <h3>Profile</h3>
+    <form method="POST">
+      <input type="hidden" name="action" value="update_profile">
+      <label>Username
+        <input type="text" value="{{ current_user.username }}" disabled>
+      </label>
+      <label>Email
+        <input type="text" value="{{ current_user.email }}" disabled>
+      </label>
+      <label>UDisc scorecard name
+        <input type="text" name="udisc_display_name" value="{{ current_user.udisc_display_name or '' }}" placeholder="e.g. Peter">
+      </label>
+      <p class="hint">Used to match your rows when importing UDisc scorecard CSVs.</p>
+
+      <label class="checkbox-label">
+        <input type="checkbox" name="bag_public" {% if current_user.bag_public %}checked{% endif %}>
+        Make my bag visible to other DiscTrack users
+      </label>
+      <p class="hint">When on, anyone who finds your profile (by username) can see the discs currently in your bag. Your notes, rounds, and throw measurements stay private either way.</p>
+
+      <button type="submit" class="btn btn-primary">Save</button>
+    </form>
+  </div>
+
+  <div class="account-card">
+    <h3>Change Password</h3>
+    <form method="POST">
+      <input type="hidden" name="action" value="change_password">
+      <label>Current password
+        <input type="password" name="current_password" required>
+      </label>
+      <label>New password
+        <input type="password" name="new_password" required minlength="6">
+      </label>
+      <label>Confirm new password
+        <input type="password" name="confirm_password" required minlength="6">
+      </label>
+      <button type="submit" class="btn btn-primary">Change Password</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

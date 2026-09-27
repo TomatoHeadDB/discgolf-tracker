@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}{{ course_name }} — DiscTrack{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>{{ course_name }}</h1>
+  <a href="{{ url_for('rounds') }}" class="btn btn-ghost">← Back to My Rounds</a>
+</div>
+
+<div class="stats-summary">
+  <div class="stat-card">
+    <span class="stat-value">{{ summary.round_count }}</span>
+    <span class="stat-label">Rounds played</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-value">{{ summary.avg_score }}</span>
+    <span class="stat-label">Avg score</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-value">{{ summary.best_score }}</span>
+    <span class="stat-label">Best score</span>
+  </div>
+  {% if summary.avg_relative is not none %}
+  <div class="stat-card">
+    <span class="stat-value">{{ summary.avg_relative }}</span>
+    <span class="stat-label">Avg +/-</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-value">{{ summary.best_relative }}</span>
+    <span class="stat-label">Best +/-</span>
+  </div>
+  {% endif %}
+</div>
+
+<table class="rounds-table sortable" id="course-rounds-table">
+  <thead>
+    <tr>
+      <th data-sort-key="date">Date</th>
+      <th data-sort-key="layout">Layout</th>
+      <th data-sort-key="score">Score</th>
+      <th data-sort-key="relative">+/-</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rounds %}
+    <tr>
+      <td data-value="{{ r.played_at.isoformat() }}"><a href="{{ url_for('round_detail', round_id=r.id) }}">{{ r.played_at.strftime('%b %-d, %Y') }}</a></td>
+      <td>{{ r.layout_name or "—" }}</td>
+      <td data-value="{{ r.total_score }}">{{ r.total_score }}</td>
+      <td data-value="{{ r.relative_score if r.relative_score is not none else 0 }}">{{ r.relative_score if r.relative_score is not none else "—" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<script src="{{ url_for('static', filename='js/sortable.js') }}"></script>
+<script>
+  SortableTable.enable(document.getElementById('course-rounds-table'));
+</script>
+{% endblock %}

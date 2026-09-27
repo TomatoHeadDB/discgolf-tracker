@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ profile_user.username }} — DiscTrack{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>{{ profile_user.username }}</h1>
+  <a href="{{ url_for('social') }}" class="btn btn-ghost">← Back to Social</a>
+</div>
+
+{% if profile_user.id != current_user.id %}
+<div class="connection-action-bar">
+  {% if is_connected %}
+    <span class="badge-connected">✓ Connected</span>
+    <form method="POST" action="{{ url_for('remove_connection', connection_id=pending_connection.id) }}" class="inline-form">
+      <button type="submit" class="btn btn-small btn-danger">Remove Connection</button>
+    </form>
+  {% elif pending_from_me %}
+    <span class="hint">Connection request sent — waiting for response.</span>
+  {% elif pending_from_them %}
+    <form method="POST" action="{{ url_for('respond_connection_request', connection_id=pending_connection.id) }}" class="inline-form">
+      <input type="hidden" name="decision" value="accept">
+      <button type="submit" class="btn btn-small btn-primary">Accept Connection Request</button>
+    </form>
+  {% else %}
+    <form method="POST" action="{{ url_for('send_connection_request', username=profile_user.username) }}">
+      <button type="submit" class="btn btn-primary">Connect</button>
+    </form>
+  {% endif %}
+</div>
+{% endif %}
+
+<section>
+  <h2>Bag</h2>
+  {% if profile_user.id != current_user.id and not profile_user.bag_public %}
+  <p class="hint">{{ profile_user.username }}'s bag is private.</p>
+  {% elif not bag %}
+  <p class="hint">No discs in bag.</p>
+  {% else %}
+  <div class="disc-grid">
+    {% for disc in bag %}
+    <div class="disc-card" style="--disc-color: {{ disc.color }}">
+      <div class="disc-card-body">
+        <h3>{{ disc.name }}</h3>
+        <p class="disc-manufacturer">{{ disc.manufacturer or "—" }}</p>
+        <p class="flight-numbers">
+          <span title="Speed">S {{ disc.speed|round(1) }}</span>
+          <span title="Glide">G {{ disc.glide|round(1) }}</span>
+          <span title="Turn">T {{ disc.turn|round(1) }}</span>
+          <span title="Fade">F {{ disc.fade|round(1) }}</span>
+        </p>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+{% endblock %}
