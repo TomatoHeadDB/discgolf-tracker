@@ -36,6 +36,27 @@
     </div>
   </div>
 
+  {% if stats.leaderboard %}
+  <section class="leaderboard-section">
+    <h2>Leaderboard — Best Courses (Avg +/-)</h2>
+    <table class="rounds-table">
+      <thead>
+        <tr><th>#</th><th>Course</th><th>Rounds</th><th>Avg +/-</th></tr>
+      </thead>
+      <tbody>
+        {% for row in stats.leaderboard %}
+        <tr class="{{ 'leaderboard-top' if row.rank == 1 else '' }}">
+          <td>{{ row.rank }}</td>
+          <td>{{ row.course_name }}</td>
+          <td>{{ row.round_count }}</td>
+          <td>{{ row.avg_relative }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+
   <section class="rounds-table-section">
     <h2>All Rounds</h2>
     <table class="rounds-table">
@@ -53,7 +74,7 @@
         {% for r in rounds %}
         <tr>
           <td>{{ r.played_at.strftime('%b %-d, %Y') }}</td>
-          <td>{{ r.course_name }}</td>
+          <td><a href="{{ url_for('round_detail', round_id=r.id) }}">{{ r.course_name }}</a></td>
           <td>{{ r.layout_name or "—" }}</td>
           <td>{{ r.total_score }}</td>
           <td>{{ r.relative_score if r.relative_score is not none else "—" }}</td>

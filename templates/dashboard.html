@@ -13,7 +13,15 @@
       </summary>
       <div class="disc-grid">
         {% for disc in cat_discs %}
-        <div class="disc-card" style="--disc-color: {{ disc.color }}">
+        <div class="disc-card"
+             style="--disc-color: {{ disc.color }}"
+             data-name="{{ disc.name|lower }}"
+             data-manufacturer="{{ (disc.manufacturer or '')|lower }}"
+             data-plastic="{{ (disc.plastic or '')|lower }}"
+             data-category="{{ disc.category }}"
+             data-speed="{{ disc.speed }}"
+             data-turn="{{ disc.turn }}"
+             data-fade="{{ disc.fade }}">
           <div class="flip-card">
             <div class="flip-card-inner">
               <div class="flip-face flip-front">
@@ -47,7 +55,6 @@
               </p>
             </div>
             <div class="disc-card-actions">
-              <a href="{{ url_for('flight_view', disc_id=disc.id) }}" class="btn btn-small">Flight</a>
               <a href="{{ url_for('edit_disc', disc_id=disc.id) }}" class="btn btn-small">Edit</a>
               <form method="POST" action="{{ url_for('delete_disc', disc_id=disc.id) }}"
                     onsubmit="return confirm('Remove {{ disc.name }} from your bag?');">
@@ -77,6 +84,28 @@
     <a href="{{ url_for('new_disc') }}" class="btn btn-primary">+ Add Disc</a>
   </div>
 {% else %}
+  <div class="filter-bar">
+    <input type="text" id="disc-search" placeholder="Search name, brand, plastic...">
+    <select id="filter-category">
+      <option value="">All Categories</option>
+      {% for cat in categories %}
+      <option value="{{ cat }}">{{ cat }}</option>
+      {% endfor %}
+    </select>
+    <select id="filter-speed">
+      <option value="">Any Speed</option>
+      <option value="1-4">Speed 1–4 (Putt/Approach)</option>
+      <option value="5-7">Speed 5–7 (Mid/Fairway)</option>
+      <option value="8-15">Speed 8+ (Distance)</option>
+    </select>
+    <select id="filter-stability">
+      <option value="">Any Stability</option>
+      <option value="understable">Understable</option>
+      <option value="stable">Stable</option>
+      <option value="overstable">Overstable</option>
+    </select>
+  </div>
+
   {% set in_bag_discs = discs | selectattr('in_bag') | list %}
   {% set out_bag_discs = discs | rejectattr('in_bag') | list %}
 
@@ -126,5 +155,64 @@
       document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
     });
   });
+
+  // ---------- Search & filter ----------
+  const searchInput = document.getElementById('disc-search');
+  const categorySelect = document.getElementById('filter-category');
+  const speedSelect = document.getElementById('filter-speed');
+  const stabilitySelect = document.getElementById('filter-stability');
+
+  if (searchInput) {
+  function stabilityOf(turn, fade) {
+    if (turn <= -2) return 'understable';
+    if (fade >= 3 && turn > -1) return 'overstable';
+    return 'stable';
+  }
+
+  function applyFilters() {
+    const q = searchInput.value.trim().toLowerCase();
+    const cat = categorySelect.value;
+    const speedRange = speedSelect.value;
+    const stab = stabilitySelect.value;
+    const filtersActive = !!q || !!cat || !!speedRange || !!stab;
+
+    document.querySelectorAll('.disc-card').forEach(function (card) {
+      const name = card.dataset.name || '';
+      const manu = card.dataset.manufacturer || '';
+      const plastic = card.dataset.plastic || '';
+      const speed = parseFloat(card.dataset.speed);
+      const turn = parseFloat(card.dataset.turn);
+      const fade = parseFloat(card.dataset.fade);
+
+      const matchesText = !q || name.includes(q) || manu.includes(q) || plastic.includes(q);
+      const matchesCat = !cat || card.dataset.category === cat;
+
+      let matchesSpeed = true;
+      if (speedRange) {
+        const [lo, hi] = speedRange.split('-').map(Number);
+        matchesSpeed = speed >= lo && speed <= hi;
+      }
+      const matchesStab = !stab || stabilityOf(turn, fade) === stab;
+
+      const visible = matchesText && matchesCat && matchesSpeed && matchesStab;
+      card.style.display = visible ? '' : 'none';
+    });
+
+    // While filtering, auto-open sections that have a match and hide
+    // sections with none; when filters are cleared, restore the default
+    // (everything open).
+    document.querySelectorAll('.disc-section').forEach(function (section) {
+      const cards = section.querySelectorAll('.disc-card');
+      const anyVisible = Array.from(cards).some((c) => c.style.display !== 'none');
+      section.style.display = filtersActive && !anyVisible ? 'none' : '';
+      if (filtersActive && anyVisible) section.open = true;
+    });
+  }
+
+  [searchInput, categorySelect, speedSelect, stabilitySelect].forEach(function (el) {
+    el.addEventListener('input', applyFilters);
+    el.addEventListener('change', applyFilters);
+  });
+  }
 </script>
 {% endblock %}

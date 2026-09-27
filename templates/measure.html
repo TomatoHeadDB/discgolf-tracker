@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}Measure a Throw — {{ disc.name }}{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Measure a Throw — {{ disc.name }}</h1>
+  <a href="{{ url_for('view_disc', disc_id=disc.id) }}" class="btn btn-ghost">← Back to {{ disc.name }}</a>
+</div>
+
+<div class="measure-layout">
+  <div class="measure-card">
+    <p class="hint">
+      Stand at your tee spot, mark it, throw the disc, walk to where it
+      landed, then mark that. We'll calculate the distance from GPS and let
+      you save it.
+    </p>
+
+    <div class="measure-steps">
+      <button type="button" id="mark-tee" class="btn btn-primary">📍 Mark Tee Spot</button>
+      <span id="tee-status" class="measure-status"></span>
+
+      <button type="button" id="mark-landing" class="btn btn-primary" disabled>🥏 Mark Landing Spot</button>
+      <span id="landing-status" class="measure-status"></span>
+    </div>
+
+    <div id="result-box" class="result-box" style="display:none;">
+      <span class="result-distance" id="result-distance"></span>
+      <form method="POST" id="save-form">
+        <input type="hidden" name="distance_feet" id="distance-input">
+        <button type="submit" class="btn btn-primary">Save Throw</button>
+      </form>
+      <button type="button" id="reset-btn" class="btn btn-ghost">Start Over</button>
+    </div>
+
+    <p class="hint gps-note" id="gps-note"></p>
+  </div>
+
+  <div class="measure-history">
+    <h3>Measured Throws</h3>
+    {% if avg_distance %}
+    <p class="avg-distance-stat">Average: <strong>{{ avg_distance }} ft</strong> ({{ throws|length }} throw{{ "s" if throws|length != 1 }})</p>
+    {% endif %}
+    {% if not throws %}
+    <p class="hint">No throws measured yet.</p>
+    {% else %}
+    <table class="rounds-table">
+      <thead><tr><th>Distance</th><th>Date</th><th></th></tr></thead>
+      <tbody>
+        {% for t in throws %}
+        <tr>
+          <td>{{ t.distance_feet | round | int }} ft</td>
+          <td>{{ t.recorded_at.strftime('%b %-d, %Y') }}</td>
+          <td>
+            <form method="POST" action="{{ url_for('delete_throw', disc_id=disc.id, throw_id=t.id) }}">
+              <button type="submit" class="btn btn-small btn-danger">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+  let teePos = null;
+  let landingPos = null;
+
+  const markTeeBtn = document.getElementById('mark-tee');
+  const markLandingBtn = document.getElementById('mark-landing');
+  const teeStatus = document.getElementById('tee-status');
+  const landingStatus = document.getElementById('landing-status');
+  const resultBox = document.getElementById('result-box');
+  const resultDistance = document.getElementById('result-distance');
+  const distanceInput = document.getElementById('distance-input');
+  const gpsNote = document.getElementById('gps-note');
+  const resetBtn = document.getElementById('reset-btn');
+
+  if (!('geolocation' in navigator)) {
+    gpsNote.textContent = 'Your browser/device does not support GPS location. Try this on a phone.';
+    markTeeBtn.disabled = true;
+  }
+
+  function getPosition() {
+    return new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(resolve, reject, {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 0,
+      });
+    });
+  }
+
+  // Haversine formula — great-circle distance between two GPS points, in feet.
+  function distanceFeet(pos1, pos2) {
+    const R = 20902231; // Earth radius in feet
+    const toRad = (d) => (d * Math.PI) / 180;
+    const dLat = toRad(pos2.lat - pos1.lat);
+    const dLng = toRad(pos2.lng - pos1.lng);
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(pos1.lat)) * Math.cos(toRad(pos2.lat)) * Math.sin(dLng / 2) ** 2;
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  }
+
+  markTeeBtn.addEventListener('click', async function () {
+    teeStatus.textContent = 'Getting location…';
+    try {
+      const pos = await getPosition();
+      teePos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      teeStatus.textContent = `✓ Marked (±${Math.round(pos.coords.accuracy)}ft accuracy)`;
+      markLandingBtn.disabled = false;
+    } catch (err) {
+      teeStatus.textContent = 'Could not get location — check location permissions.';
+    }
+  });
+
+  markLandingBtn.addEventListener('click', async function () {
+    landingStatus.textContent = 'Getting location…';
+    try {
+      const pos = await getPosition();
+      landingPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      landingStatus.textContent = `✓ Marked (±${Math.round(pos.coords.accuracy)}ft accuracy)`;
+      const dist = Math.round(distanceFeet(teePos, landingPos));
+      resultDistance.textContent = dist + ' ft';
+      distanceInput.value = dist;
+      resultBox.style.display = 'block';
+    } catch (err) {
+      landingStatus.textContent = 'Could not get location — check location permissions.';
+    }
+  });
+
+  resetBtn.addEventListener('click', function () {
+    teePos = null;
+    landingPos = null;
+    teeStatus.textContent = '';
+    landingStatus.textContent = '';
+    resultBox.style.display = 'none';
+    markLandingBtn.disabled = true;
+  });
+</script>
+{% endblock %}

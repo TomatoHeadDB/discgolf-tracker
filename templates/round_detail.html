@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}{{ round.course_name }} — Round Detail{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>{{ round.course_name }}</h1>
+  <a href="{{ url_for('rounds') }}" class="btn btn-ghost">← Back to Rounds</a>
+</div>
+
+<p class="round-meta">
+  {{ round.layout_name or "—" }} · {{ round.played_at.strftime('%B %-d, %Y') }}
+</p>
+
+<table class="rounds-table">
+  <thead>
+    <tr>
+      <th>Player</th>
+      <th>Total</th>
+      <th>+/-</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in players %}
+    <tr class="{{ 'me-row' if p.is_me else '' }}">
+      <td>{{ p.name }}{% if p.is_me %} <span class="you-badge">You</span>{% endif %}</td>
+      <td>{{ p.total }}</td>
+      <td>{{ p.relative if p.relative is not none else "—" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% if hole_scores %}
+<section class="hole-scores-section">
+  <h2>Your Hole-by-Hole</h2>
+  <div class="hole-grid">
+    {% for score in hole_scores %}
+    <div class="hole-cell">
+      <span class="hole-num">H{{ loop.index }}</span>
+      <span class="hole-score">{{ score }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}

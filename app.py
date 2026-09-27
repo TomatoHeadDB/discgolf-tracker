@@ -26,7 +26,7 @@ from flask_login import (
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
 
-from models import db, User, Disc, Round
+from models import db, User, Disc, Round, RoundPlayerScore, ThrowMeasurement
 
 load_dotenv()
 
@@ -148,7 +148,13 @@ def create_app():
             db.session.commit()
             flash("Notes updated.", "success")
             return redirect(url_for("view_disc", disc_id=disc.id))
-        return render_template("disc_view.html", disc=disc)
+        throws = ThrowMeasurement.query.filter_by(disc_id=disc.id, user_id=current_user.id).all()
+        avg_distance = (
+            round(sum(t.distance_feet for t in throws) / len(throws)) if throws else None
+        )
+        return render_template(
+            "disc_view.html", disc=disc, avg_distance=avg_distance, throw_count=len(throws)
+        )
 
     @app.route("/discs/new", methods=["GET", "POST"])
     @login_required
@@ -205,6 +211,51 @@ def create_app():
         disc = _get_owned_disc(disc_id)
         return render_template("flight.html", disc=disc)
 
+    @app.route("/discs/<int:disc_id>/measure", methods=["GET", "POST"])
+    @login_required
+    def measure_disc(disc_id):
+        disc = _get_owned_disc(disc_id)
+        if request.method == "POST":
+            try:
+                distance = float(request.form.get("distance_feet", ""))
+            except ValueError:
+                flash("Couldn't read that measurement — try again.", "error")
+                return redirect(url_for("measure_disc", disc_id=disc.id))
+            if distance <= 0 or distance > 2000:
+                flash("That distance doesn't look right — try again.", "error")
+                return redirect(url_for("measure_disc", disc_id=disc.id))
+            db.session.add(
+                ThrowMeasurement(
+                    user_id=current_user.id, disc_id=disc.id, distance_feet=distance
+                )
+            )
+            db.session.commit()
+            flash(f"Saved throw: {round(distance)} ft.", "success")
+            return redirect(url_for("measure_disc", disc_id=disc.id))
+
+        throws = (
+            ThrowMeasurement.query.filter_by(disc_id=disc.id, user_id=current_user.id)
+            .order_by(ThrowMeasurement.recorded_at.desc())
+            .all()
+        )
+        avg_distance = (
+            round(sum(t.distance_feet for t in throws) / len(throws)) if throws else None
+        )
+        return render_template(
+            "measure.html", disc=disc, throws=throws, avg_distance=avg_distance
+        )
+
+    @app.route("/discs/<int:disc_id>/measure/<int:throw_id>/delete", methods=["POST"])
+    @login_required
+    def delete_throw(disc_id, throw_id):
+        disc = _get_owned_disc(disc_id)
+        t = db.session.get(ThrowMeasurement, throw_id)
+        if t is None or t.user_id != current_user.id or t.disc_id != disc.id:
+            abort(404)
+        db.session.delete(t)
+        db.session.commit()
+        return redirect(url_for("measure_disc", disc_id=disc.id))
+
     # ---------- Rounds (imported UDisc scorecards) ----------
 
     @app.route("/rounds")
@@ -221,6 +272,35 @@ def create_app():
             rounds=user_rounds,
             stats=stats,
             rounds_json=json.dumps([r.to_dict() for r in user_rounds]),
+        )
+
+    @app.route("/rounds/<int:round_id>")
+    @login_required
+    def round_detail(round_id):
+        r = db.session.get(Round, round_id)
+        if r is None or r.user_id != current_user.id:
+            abort(404)
+        players = [
+            {
+                "name": current_user.udisc_display_name or "You",
+                "total": r.total_score,
+                "relative": r.relative_score,
+                "is_me": True,
+            }
+        ]
+        for ps in r.player_scores:
+            players.append(
+                {
+                    "name": ps.player_name,
+                    "total": ps.total_score,
+                    "relative": ps.relative_score,
+                    "is_me": False,
+                }
+            )
+        players.sort(key=lambda p: p["total"])
+        hole_scores = json.loads(r.hole_scores) if r.hole_scores else []
+        return render_template(
+            "round_detail.html", round=r, players=players, hole_scores=hole_scores
         )
 
     @app.route("/rounds/import", methods=["GET", "POST"])
@@ -311,8 +391,9 @@ def create_app():
         raw = (raw or "").strip()
         if not raw:
             return None
-        # UDisc's date field looks like "2024-03-15 1014" (date + time with
-        # no separator). We only care about the date portion for stats/sorting.
+        # UDisc's StartDate field looks like "2026-09-25 1630-0400" (date,
+        # then time and UTC offset squished together with no separator).
+        # We only need the date portion for stats/sorting.
         date_part = raw.split(" ")[0]
         try:
             return datetime.strptime(date_part, "%Y-%m-%d").date()
@@ -331,6 +412,32 @@ def create_app():
             key=lambda f: int(re.match(r"^Hole(\d+)$", f).group(1)),
         )
 
+        def parse_int(raw_val):
+            raw_val = (raw_val or "").strip()
+            if raw_val == "":
+                return None
+            try:
+                return int(raw_val)
+            except ValueError:
+                return None
+
+        # Group CSV rows by round — everyone on the same scorecard shares
+        # the same course/layout/start time, so this reunites the group
+        # even though the file lists one row per player.
+        groups = {}
+        order = []
+        for row in reader:
+            course = (row.get("CourseName") or "").strip()
+            layout = (row.get("LayoutName") or "").strip() or None
+            played_at = _parse_udisc_date(row.get("StartDate"))
+            if not course or played_at is None:
+                continue
+            key = (course, layout, played_at)
+            if key not in groups:
+                groups[key] = []
+                order.append(key)
+            groups[key].append(row)
+
         added = 0
         skipped_dupe = 0
         skipped_bad = 0
@@ -342,67 +449,81 @@ def create_app():
             for r in Round.query.filter_by(user_id=current_user.id).all()
         }
 
-        for row in reader:
-            player = (row.get("PlayerName") or "").strip()
-            if player.lower() != display_name.lower():
-                continue  # not this user's row (includes the "Par" row)
+        for key in order:
+            course, layout, played_at = key
+            group_rows = groups[key]
 
-            course = (row.get("CourseName") or "").strip()
-            layout = (row.get("LayoutName") or "").strip() or None
-            played_at = _parse_udisc_date(row.get("Date"))
-            total_raw = (row.get("Total") or "").strip()
+            my_row = next(
+                (
+                    r for r in group_rows
+                    if (r.get("PlayerName") or "").strip().lower() == display_name.lower()
+                ),
+                None,
+            )
+            if my_row is None:
+                continue  # not on this scorecard
 
-            if not course or played_at is None or not total_raw:
+            total_score = parse_int(my_row.get("Total"))
+            if total_score is None:
                 skipped_bad += 1
                 continue
-            try:
-                total_score = int(total_raw)
-            except ValueError:
-                skipped_bad += 1
-                continue
+            relative_score = parse_int(my_row.get("+/-"))
 
-            relative_raw = (row.get("+/-") or "").strip()
-            relative_score = None
-            if relative_raw not in ("", None):
-                try:
-                    relative_score = int(relative_raw)
-                except ValueError:
-                    relative_score = None
+            dedupe_key = (course, layout, played_at, total_score)
+            if dedupe_key in existing:
+                skipped_dupe += 1
+                continue
+            existing.add(dedupe_key)
 
             holes = []
             for col in hole_columns:
-                val = (row.get(col) or "").strip()
-                if val == "":
-                    continue
-                try:
-                    holes.append(int(val))
-                except ValueError:
-                    pass
+                val = parse_int(my_row.get(col))
+                if val is not None:
+                    holes.append(val)
 
-            key = (course, layout, played_at, total_score)
-            if key in existing:
-                skipped_dupe += 1
-                continue
-            existing.add(key)
-
-            db.session.add(
-                Round(
-                    user_id=current_user.id,
-                    course_name=course,
-                    layout_name=layout,
-                    played_at=played_at,
-                    total_score=total_score,
-                    relative_score=relative_score,
-                    hole_scores=json.dumps(holes) if holes else None,
-                )
+            new_round = Round(
+                user_id=current_user.id,
+                course_name=course,
+                layout_name=layout,
+                played_at=played_at,
+                total_score=total_score,
+                relative_score=relative_score,
+                hole_scores=json.dumps(holes) if holes else None,
             )
+            db.session.add(new_round)
+            db.session.flush()  # assign new_round.id for the FK below
+
+            # Capture everyone else on the same scorecard too, so the round
+            # view can show the whole group — just as reference data, not
+            # tied to any other app account.
+            for row in group_rows:
+                player = (row.get("PlayerName") or "").strip()
+                if not player or player.lower() in (display_name.lower(), "par"):
+                    continue
+                other_total = parse_int(row.get("Total"))
+                if other_total is None:
+                    continue
+                db.session.add(
+                    RoundPlayerScore(
+                        round_id=new_round.id,
+                        player_name=player,
+                        total_score=other_total,
+                        relative_score=parse_int(row.get("+/-")),
+                    )
+                )
+
             added += 1
 
         return added, skipped_dupe, skipped_bad
 
     def _compute_round_stats(user_rounds):
         if not user_rounds:
-            return {"avg_by_course": [], "total_rounds": 0, "best_relative": None}
+            return {
+                "avg_by_course": [],
+                "leaderboard": [],
+                "total_rounds": 0,
+                "best_relative": None,
+            }
 
         by_course = {}
         for r in user_rounds:
@@ -420,11 +541,31 @@ def create_app():
             key=lambda x: x["course_name"],
         )
 
+        # Leaderboard: courses ranked by average relative score (+/-), best
+        # (most under par) first. Only courses with at least one round that
+        # has a relative score are eligible.
+        leaderboard_rows = []
+        for course, rs in by_course.items():
+            rel_scores = [x.relative_score for x in rs if x.relative_score is not None]
+            if not rel_scores:
+                continue
+            leaderboard_rows.append(
+                {
+                    "course_name": course,
+                    "round_count": len(rel_scores),
+                    "avg_relative": round(sum(rel_scores) / len(rel_scores), 1),
+                }
+            )
+        leaderboard_rows.sort(key=lambda x: x["avg_relative"])
+        for i, row in enumerate(leaderboard_rows, start=1):
+            row["rank"] = i
+
         relative_scores = [r.relative_score for r in user_rounds if r.relative_score is not None]
         best_relative = min(relative_scores) if relative_scores else None
 
         return {
             "avg_by_course": avg_by_course,
+            "leaderboard": leaderboard_rows,
             "total_rounds": len(user_rounds),
             "best_relative": best_relative,
         }

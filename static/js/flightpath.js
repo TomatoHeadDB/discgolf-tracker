@@ -44,7 +44,9 @@
       fade = clamp(fade - deltaSteps * 0.4, 0, 5);
     }
 
-    const maxDistance = (150 + speed * 18 + glide * 10) * power;
+    const maxDistance = opts.calibratedDistance
+      ? opts.calibratedDistance * power
+      : (150 + speed * 18 + glide * 10) * power;
 
     // Total lateral distance (feet) a disc with turn=-5 / fade=5 would end
     // up displaced by, at the very end of the flight. Each effect's

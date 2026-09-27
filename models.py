@@ -59,6 +59,10 @@ class Disc(db.Model):
 
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
+    throws = db.relationship(
+        "ThrowMeasurement", backref="disc", lazy=True, cascade="all, delete-orphan"
+    )
+
     def to_dict(self):
         return {
             "id": self.id,
@@ -93,6 +97,10 @@ class Round(db.Model):
 
     imported_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
+    player_scores = db.relationship(
+        "RoundPlayerScore", backref="round", lazy=True, cascade="all, delete-orphan"
+    )
+
     def to_dict(self):
         return {
             "id": self.id,
@@ -103,3 +111,31 @@ class Round(db.Model):
             "relative_score": self.relative_score,
             "hole_scores": json.loads(self.hole_scores) if self.hole_scores else [],
         }
+
+
+class RoundPlayerScore(db.Model):
+    """A companion score for someone else on the same scorecard as the
+    round owner. Not a full app user — just a name + score captured from
+    the CSV so the round view can show the whole group, not just you."""
+
+    __tablename__ = "round_player_scores"
+
+    id = db.Column(db.Integer, primary_key=True)
+    round_id = db.Column(db.Integer, db.ForeignKey("rounds.id"), nullable=False, index=True)
+    player_name = db.Column(db.String(120), nullable=False)
+    total_score = db.Column(db.Integer, nullable=False)
+    relative_score = db.Column(db.Integer, nullable=True)
+
+
+class ThrowMeasurement(db.Model):
+    """A single GPS-measured throw distance for a specific disc, used to
+    calibrate that disc's flight preview to how far the player actually
+    throws it."""
+
+    __tablename__ = "throw_measurements"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    disc_id = db.Column(db.Integer, db.ForeignKey("discs.id"), nullable=False, index=True)
+    distance_feet = db.Column(db.Float, nullable=False)
+    recorded_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
