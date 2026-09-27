@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}{{ disc.name }} — Disc Golf Tracker{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>{{ disc.name }}</h1>
+  <a href="{{ url_for('dashboard') }}" class="btn btn-ghost">← Back to bag</a>
+</div>
+
+<div class="view-layout">
+  <div class="view-main">
+    {% if disc.photo_filename %}
+    <img class="current-photo-full" src="{{ url_for('disc_photo', disc_id=disc.id) }}" alt="{{ disc.name }}">
+    {% endif %}
+
+    <dl class="summary-list">
+      <div><dt>Manufacturer</dt><dd>{{ disc.manufacturer or "—" }}</dd></div>
+      <div><dt>Category</dt><dd>{{ disc.category }}</dd></div>
+      <div><dt>Plastic</dt><dd>{{ disc.plastic or "—" }}</dd></div>
+      <div><dt>Weight</dt><dd>{{ (disc.weight_grams ~ "g") if disc.weight_grams else "—" }}</dd></div>
+      <div><dt>Condition</dt><dd>{{ disc.condition or "—" }}</dd></div>
+      <div><dt>In bag</dt><dd>{{ "Yes" if disc.in_bag else "No" }}</dd></div>
+    </dl>
+
+    <p class="flight-numbers-big">
+      <span>Speed <strong>{{ disc.speed }}</strong></span>
+      <span>Glide <strong>{{ disc.glide }}</strong></span>
+      <span>Turn <strong>{{ disc.turn }}</strong></span>
+      <span>Fade <strong>{{ disc.fade }}</strong></span>
+    </p>
+
+    <div class="view-actions">
+      <a href="{{ url_for('flight_view', disc_id=disc.id) }}" class="btn btn-small">View Flight Path</a>
+      <a href="{{ url_for('edit_disc', disc_id=disc.id) }}" class="btn btn-small">Edit Disc</a>
+    </div>
+  </div>
+
+  <div class="view-notes">
+    <h3>Notes</h3>
+    <form method="POST">
+      <textarea name="notes" rows="10" placeholder="Add notes about this disc — how it flies for you, when you bought it, what to remember on the course...">{{ disc.notes or '' }}</textarea>
+      <button type="submit" class="btn btn-primary">Save Notes</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

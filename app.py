@@ -1,5 +1,10 @@
 import os
 import uuid
+import csv
+import io
+import re
+import json
+from datetime import datetime
 from flask import (
     Flask,
     render_template,
@@ -21,7 +26,7 @@ from flask_login import (
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
 
-from models import db, User, Disc
+from models import db, User, Disc, Round
 
 load_dotenv()
 
@@ -134,6 +139,17 @@ def create_app():
         )
         return render_template("dashboard.html", discs=discs, categories=CATEGORIES)
 
+    @app.route("/discs/<int:disc_id>", methods=["GET", "POST"])
+    @login_required
+    def view_disc(disc_id):
+        disc = _get_owned_disc(disc_id)
+        if request.method == "POST":
+            disc.notes = request.form.get("notes", "").strip() or None
+            db.session.commit()
+            flash("Notes updated.", "success")
+            return redirect(url_for("view_disc", disc_id=disc.id))
+        return render_template("disc_view.html", disc=disc)
+
     @app.route("/discs/new", methods=["GET", "POST"])
     @login_required
     def new_disc():
@@ -189,6 +205,86 @@ def create_app():
         disc = _get_owned_disc(disc_id)
         return render_template("flight.html", disc=disc)
 
+    # ---------- Rounds (imported UDisc scorecards) ----------
+
+    @app.route("/rounds")
+    @login_required
+    def rounds():
+        user_rounds = (
+            Round.query.filter_by(user_id=current_user.id)
+            .order_by(Round.played_at.desc())
+            .all()
+        )
+        stats = _compute_round_stats(user_rounds)
+        return render_template(
+            "rounds.html",
+            rounds=user_rounds,
+            stats=stats,
+            rounds_json=json.dumps([r.to_dict() for r in user_rounds]),
+        )
+
+    @app.route("/rounds/import", methods=["GET", "POST"])
+    @login_required
+    def import_rounds():
+        if request.method == "POST":
+            display_name = request.form.get("display_name", "").strip()
+            file = request.files.get("csv_file")
+
+            if not display_name:
+                flash("Enter the name that appears on your UDisc scorecards.", "error")
+                return render_template("rounds_import.html")
+            if not file or not file.filename:
+                flash("Choose a CSV file exported from UDisc.", "error")
+                return render_template("rounds_import.html", display_name=display_name)
+            if not file.filename.lower().endswith(".csv"):
+                flash("That doesn't look like a CSV file.", "error")
+                return render_template("rounds_import.html", display_name=display_name)
+
+            current_user.udisc_display_name = display_name
+            db.session.commit()
+
+            try:
+                added, skipped_dupe, skipped_bad = _import_udisc_csv(file, display_name)
+            except Exception:
+                flash(
+                    "Couldn't read that file — make sure it's an unmodified "
+                    "export from UDisc (More → Scorecards → Export to CSV).",
+                    "error",
+                )
+                return render_template("rounds_import.html", display_name=display_name)
+
+            db.session.commit()
+
+            if added:
+                flash(
+                    f"Imported {added} round(s)."
+                    + (f" Skipped {skipped_dupe} already-imported round(s)." if skipped_dupe else "")
+                    + (f" Skipped {skipped_bad} row(s) that couldn't be read." if skipped_bad else ""),
+                    "success",
+                )
+            else:
+                flash(
+                    f'No new rounds found for "{display_name}". '
+                    "Double-check the name matches exactly what shows on your UDisc scorecards.",
+                    "error",
+                )
+            return redirect(url_for("rounds"))
+
+        return render_template(
+            "rounds_import.html", display_name=current_user.udisc_display_name
+        )
+
+    @app.route("/rounds/<int:round_id>/delete", methods=["POST"])
+    @login_required
+    def delete_round(round_id):
+        r = db.session.get(Round, round_id)
+        if r is None or r.user_id != current_user.id:
+            abort(404)
+        db.session.delete(r)
+        db.session.commit()
+        flash("Round deleted.", "success")
+        return redirect(url_for("rounds"))
+
     # ---------- JSON API (used by the flight-path canvas + multi-disc compare) ----------
 
     @app.route("/api/discs")
@@ -210,6 +306,128 @@ def create_app():
         if disc is None or disc.user_id != current_user.id:
             abort(404)
         return disc
+
+    def _parse_udisc_date(raw):
+        raw = (raw or "").strip()
+        if not raw:
+            return None
+        # UDisc's date field looks like "2024-03-15 1014" (date + time with
+        # no separator). We only care about the date portion for stats/sorting.
+        date_part = raw.split(" ")[0]
+        try:
+            return datetime.strptime(date_part, "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+    def _import_udisc_csv(file_storage, display_name):
+        raw = file_storage.read().decode("utf-8-sig", errors="replace")
+        reader = csv.DictReader(io.StringIO(raw))
+
+        if not reader.fieldnames:
+            raise ValueError("Empty or unreadable CSV")
+
+        hole_columns = sorted(
+            (f for f in reader.fieldnames if re.match(r"^Hole\d+$", f)),
+            key=lambda f: int(re.match(r"^Hole(\d+)$", f).group(1)),
+        )
+
+        added = 0
+        skipped_dupe = 0
+        skipped_bad = 0
+
+        # Existing rounds for this user, to skip re-importing the same round
+        # on a second upload of an overlapping export.
+        existing = {
+            (r.course_name, r.layout_name, r.played_at, r.total_score)
+            for r in Round.query.filter_by(user_id=current_user.id).all()
+        }
+
+        for row in reader:
+            player = (row.get("PlayerName") or "").strip()
+            if player.lower() != display_name.lower():
+                continue  # not this user's row (includes the "Par" row)
+
+            course = (row.get("CourseName") or "").strip()
+            layout = (row.get("LayoutName") or "").strip() or None
+            played_at = _parse_udisc_date(row.get("Date"))
+            total_raw = (row.get("Total") or "").strip()
+
+            if not course or played_at is None or not total_raw:
+                skipped_bad += 1
+                continue
+            try:
+                total_score = int(total_raw)
+            except ValueError:
+                skipped_bad += 1
+                continue
+
+            relative_raw = (row.get("+/-") or "").strip()
+            relative_score = None
+            if relative_raw not in ("", None):
+                try:
+                    relative_score = int(relative_raw)
+                except ValueError:
+                    relative_score = None
+
+            holes = []
+            for col in hole_columns:
+                val = (row.get(col) or "").strip()
+                if val == "":
+                    continue
+                try:
+                    holes.append(int(val))
+                except ValueError:
+                    pass
+
+            key = (course, layout, played_at, total_score)
+            if key in existing:
+                skipped_dupe += 1
+                continue
+            existing.add(key)
+
+            db.session.add(
+                Round(
+                    user_id=current_user.id,
+                    course_name=course,
+                    layout_name=layout,
+                    played_at=played_at,
+                    total_score=total_score,
+                    relative_score=relative_score,
+                    hole_scores=json.dumps(holes) if holes else None,
+                )
+            )
+            added += 1
+
+        return added, skipped_dupe, skipped_bad
+
+    def _compute_round_stats(user_rounds):
+        if not user_rounds:
+            return {"avg_by_course": [], "total_rounds": 0, "best_relative": None}
+
+        by_course = {}
+        for r in user_rounds:
+            by_course.setdefault(r.course_name, []).append(r)
+
+        avg_by_course = sorted(
+            (
+                {
+                    "course_name": course,
+                    "round_count": len(rs),
+                    "avg_score": round(sum(x.total_score for x in rs) / len(rs), 1),
+                }
+                for course, rs in by_course.items()
+            ),
+            key=lambda x: x["course_name"],
+        )
+
+        relative_scores = [r.relative_score for r in user_rounds if r.relative_score is not None]
+        best_relative = min(relative_scores) if relative_scores else None
+
+        return {
+            "avg_by_course": avg_by_course,
+            "total_rounds": len(user_rounds),
+            "best_relative": best_relative,
+        }
 
     def _allowed_photo(filename):
         return (

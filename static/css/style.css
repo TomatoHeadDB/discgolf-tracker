@@ -38,6 +38,7 @@ body {
 .nav-links { display: flex; align-items: center; gap: 16px; }
 .nav-links a { color: var(--text-muted); text-decoration: none; }
 .nav-links a:hover { color: var(--text); }
+.nav-links a.nav-active { color: var(--primary-dark); font-weight: 600; }
 .nav-user { color: var(--text-muted); font-size: 0.9rem; }
 
 .container {
@@ -179,13 +180,44 @@ form input[type="color"] {
   color: var(--text-muted);
 }
 .disc-section { margin-bottom: 32px; }
+.disc-section summary {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  list-style: none;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+  margin-bottom: 16px;
+}
+.disc-section summary::-webkit-details-marker { display: none; }
+.disc-section summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 8px;
+  color: var(--text-muted);
+  transition: transform 0.15s;
+  font-size: 0.8rem;
+}
+.disc-section[open] summary::before { transform: rotate(90deg); }
 .disc-section h2 {
   font-size: 1rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 6px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.count-badge {
+  background: #f1f5f9;
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 1px 9px;
+  font-size: 0.78rem;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 600;
 }
 
 .disc-grid {
@@ -202,6 +234,8 @@ form input[type="color"] {
   overflow: hidden;
 }
 .disc-card-body { padding: 12px 14px 16px; }
+.disc-card-info { cursor: pointer; border-radius: 6px; margin: -4px -6px 8px; padding: 4px 6px; }
+.disc-card-info:hover { background: #f8fafc; }
 .disc-card-body h3 { margin: 0 0 2px; font-size: 1.02rem; }
 .disc-manufacturer { color: var(--text-muted); font-size: 0.82rem; margin: 0 0 8px; }
 .badge-out { color: #b45309; }
@@ -285,6 +319,61 @@ form input[type="color"] {
   .live-preview { position: static; }
 }
 
+/* Disc view (read-only summary) page */
+.view-layout {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 28px;
+  align-items: start;
+}
+.view-main {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+.summary-list {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px 24px;
+  margin: 16px 0;
+}
+.summary-list > div {
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+  font-size: 0.9rem;
+}
+.summary-list dt { color: var(--text-muted); margin: 0; }
+.summary-list dd { margin: 0; font-weight: 500; }
+.view-actions { display: flex; gap: 8px; margin-top: 18px; }
+
+.view-notes {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px;
+  position: sticky;
+  top: 20px;
+}
+.view-notes h3 { margin-top: 0; font-size: 0.95rem; color: var(--text-muted); }
+.view-notes textarea {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 0.92rem;
+  margin-bottom: 10px;
+  resize: vertical;
+}
+
+@media (max-width: 800px) {
+  .view-layout { grid-template-columns: 1fr; }
+  .view-notes { position: static; }
+}
+
 /* Flight page */
 .flight-page {
   display: grid;
@@ -331,4 +420,86 @@ form input[type="color"] {
 
 @media (max-width: 800px) {
   .flight-page { grid-template-columns: 1fr; }
+}
+
+/* Rounds page */
+.stats-summary {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 20px;
+  display: flex;
+  flex-direction: column;
+  min-width: 130px;
+}
+.stat-value { font-size: 1.6rem; font-weight: 700; }
+.stat-label { color: var(--text-muted); font-size: 0.82rem; }
+
+.charts-layout {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 16px;
+  margin-bottom: 28px;
+}
+.chart-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.chart-card h3 { margin: 0 0 10px; font-size: 0.92rem; color: var(--text-muted); }
+.chart-card canvas { width: 100%; height: auto; display: block; }
+
+@media (max-width: 800px) {
+  .charts-layout { grid-template-columns: 1fr; }
+}
+
+.rounds-table-section h2 {
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+}
+.rounds-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.rounds-table th, .rounds-table td {
+  text-align: left;
+  padding: 10px 14px;
+  font-size: 0.9rem;
+  border-bottom: 1px solid var(--border);
+}
+.rounds-table th { color: var(--text-muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; }
+.rounds-table tr:last-child td { border-bottom: none; }
+.rounds-table form { margin: 0; }
+
+/* Import page */
+.import-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+.import-form, .import-help {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+.import-help h3 { margin-top: 0; font-size: 0.95rem; }
+.import-help ol { padding-left: 20px; font-size: 0.92rem; line-height: 1.7; }
+
+@media (max-width: 800px) {
+  .import-layout { grid-template-columns: 1fr; }
 }

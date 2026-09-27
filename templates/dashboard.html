@@ -7,8 +7,10 @@
   {% for cat in categories %}
     {% set cat_discs = discs | selectattr('category', 'equalto', cat) | list %}
     {% if cat_discs %}
-    <section class="disc-section">
-      <h2>{{ cat }}</h2>
+    <details class="disc-section" open>
+      <summary>
+        <h2>{{ cat }} <span class="count-badge">{{ cat_discs|length }}</span></h2>
+      </summary>
       <div class="disc-grid">
         {% for disc in cat_discs %}
         <div class="disc-card" style="--disc-color: {{ disc.color }}">
@@ -34,14 +36,16 @@
             </div>
           </div>
           <div class="disc-card-body">
-            <h3>{{ disc.name }}</h3>
-            <p class="disc-manufacturer">{{ disc.manufacturer or "—" }}</p>
-            <p class="flight-numbers">
-              <span title="Speed">S {{ disc.speed|round(1) }}</span>
-              <span title="Glide">G {{ disc.glide|round(1) }}</span>
-              <span title="Turn">T {{ disc.turn|round(1) }}</span>
-              <span title="Fade">F {{ disc.fade|round(1) }}</span>
-            </p>
+            <div class="disc-card-info" data-href="{{ url_for('view_disc', disc_id=disc.id) }}">
+              <h3>{{ disc.name }}</h3>
+              <p class="disc-manufacturer">{{ disc.manufacturer or "—" }}</p>
+              <p class="flight-numbers">
+                <span title="Speed">S {{ disc.speed|round(1) }}</span>
+                <span title="Glide">G {{ disc.glide|round(1) }}</span>
+                <span title="Turn">T {{ disc.turn|round(1) }}</span>
+                <span title="Fade">F {{ disc.fade|round(1) }}</span>
+              </p>
+            </div>
             <div class="disc-card-actions">
               <a href="{{ url_for('flight_view', disc_id=disc.id) }}" class="btn btn-small">Flight</a>
               <a href="{{ url_for('edit_disc', disc_id=disc.id) }}" class="btn btn-small">Edit</a>
@@ -54,7 +58,7 @@
         </div>
         {% endfor %}
       </div>
-    </section>
+    </details>
     {% endif %}
   {% endfor %}
 {% endmacro %}
@@ -99,6 +103,12 @@
       fade: parseFloat(canvas.dataset.fade),
       color: canvas.dataset.color,
       weight_grams: canvas.dataset.weight ? parseFloat(canvas.dataset.weight) : null
+    });
+  });
+
+  document.querySelectorAll('.disc-card-info').forEach(function (el) {
+    el.addEventListener('click', function () {
+      window.location.href = el.dataset.href;
     });
   });
 

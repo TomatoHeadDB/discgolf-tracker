@@ -11,6 +11,8 @@
   <nav class="navbar">
     <a class="brand" href="{{ url_for('dashboard') }}">🥏 Disc Golf Tracker</a>
     <div class="nav-links">
+      <a href="{{ url_for('dashboard') }}" class="{{ 'nav-active' if request.endpoint == 'dashboard' else '' }}">My Bag</a>
+      <a href="{{ url_for('rounds') }}" class="{{ 'nav-active' if request.endpoint in ['rounds', 'import_rounds'] else '' }}">Rounds</a>
       <span class="nav-user">{{ current_user.username }}</span>
       <a href="{{ url_for('logout') }}">Log out</a>
     </div>

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Import Scorecards — Disc Golf Tracker{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Import Scorecards</h1>
+  <a href="{{ url_for('rounds') }}" class="btn btn-ghost">← Back to Rounds</a>
+</div>
+
+<div class="import-layout">
+  <form method="POST" enctype="multipart/form-data" class="import-form">
+    <label>Your name as it appears on UDisc scorecards
+      <input type="text" name="display_name" required value="{{ display_name or '' }}" placeholder="e.g. Peter">
+    </label>
+    <p class="hint">
+      A scorecard usually has everyone in your group on it — we only import
+      rows matching this exact name, so your friends' scores stay out of
+      your stats.
+    </p>
+
+    <label>CSV file from UDisc
+      <input type="file" name="csv_file" accept=".csv" required>
+    </label>
+
+    <button type="submit" class="btn btn-primary">Import</button>
+  </form>
+
+  <div class="import-help">
+    <h3>How to export from UDisc</h3>
+    <ol>
+      <li>Open the UDisc app and tap <strong>More</strong>, then <strong>Scorecards</strong>.</li>
+      <li>Tap the <strong>☰</strong> menu in the top-right corner.</li>
+      <li>Select <strong>Export to CSV</strong>.</li>
+      <li>Save the file somewhere you can upload it from here (email it to yourself, save to cloud storage, etc.).</li>
+    </ol>
+    <p class="hint">
+      This export includes your entire round history, not just new rounds —
+      that's fine, re-importing the same file (or an overlapping one) won't
+      create duplicates.
+    </p>
+  </div>
+</div>
+{% endblock %}

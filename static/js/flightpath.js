@@ -138,6 +138,9 @@
     if (style.grid) {
       drawGrid(ctx, W, H, originX, originY, scale, maxDistance, style);
     }
+    if (style.centerLine) {
+      drawCenterLine(ctx, originX, originY, style);
+    }
 
     // Path
     ctx.beginPath();
@@ -196,8 +199,11 @@
       ctx.stroke();
       ctx.fillText(d + 'ft', 4, y - 3);
     }
+    ctx.restore();
+  }
 
-    // Center line (thrower's straight line)
+  function drawCenterLine(ctx, originX, originY, style) {
+    ctx.save();
     ctx.setLineDash([4, 4]);
     ctx.beginPath();
     ctx.moveTo(originX, style.padding.top);
@@ -219,6 +225,7 @@
       gridColor: 'rgba(148, 163, 184, 0.25)',
       gridTextColor: '#94a3b8',
       gridFont: '11px system-ui, sans-serif',
+      centerLine: true,
       centerLineColor: 'rgba(148, 163, 184, 0.4)',
       showDistanceLabel: true,
       labelColor: '#334155',
@@ -228,13 +235,17 @@
 
   function drawMini(canvas, disc) {
     drawPathOnCanvas(canvas, disc, { throwStyle: 'RHBH', power: 1 }, {
-      padding: { top: 10, bottom: 10, left: 16, right: 16 },
+      padding: { top: 22, bottom: 10, left: 16, right: 16 },
       minLateralSpan: 30,
       lineWidth: 3,
       markerRadius: 3,
       startColor: '#cbd5e1',
       grid: false,
-      showDistanceLabel: false,
+      centerLine: true,
+      centerLineColor: 'rgba(148, 163, 184, 0.5)',
+      showDistanceLabel: true,
+      labelColor: '#475569',
+      labelFont: '600 11px system-ui, sans-serif',
     });
   }
 
