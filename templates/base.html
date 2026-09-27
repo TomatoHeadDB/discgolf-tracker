@@ -9,12 +9,16 @@
 <body>
   {% if current_user.is_authenticated %}
   <nav class="navbar">
-    <a class="brand" href="{{ url_for('dashboard') }}">🥏 Disc Golf Tracker</a>
-    <div class="nav-links">
-      <a href="{{ url_for('dashboard') }}" class="{{ 'nav-active' if request.endpoint == 'dashboard' else '' }}">My Bag</a>
-      <a href="{{ url_for('rounds') }}" class="{{ 'nav-active' if request.endpoint in ['rounds', 'import_rounds'] else '' }}">Rounds</a>
-      <span class="nav-user">{{ current_user.username }}</span>
-      <a href="{{ url_for('logout') }}">Log out</a>
+    <div class="navbar-top">
+      <a class="brand" href="{{ url_for('dashboard') }}">🥏 Disc Golf Tracker</a>
+      <div class="nav-account">
+        <span class="nav-user">{{ current_user.username }}</span>
+        <a href="{{ url_for('logout') }}">Log out</a>
+      </div>
+    </div>
+    <div class="tab-strip">
+      <a class="page-tab {{ 'nav-active' if request.endpoint == 'dashboard' else '' }}" href="{{ url_for('dashboard') }}">My Bag</a>
+      <a class="page-tab {{ 'nav-active' if request.endpoint in ['rounds', 'import_rounds'] else '' }}" href="{{ url_for('rounds') }}">Rounds</a>
     </div>
   </nav>
   {% endif %}
