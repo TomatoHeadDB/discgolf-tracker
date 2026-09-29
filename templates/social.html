@@ -1,10 +1,12 @@
 {% extends "base.html" %}
-{% from "_macros.html" import avatar %}
+{% from "_macros.html" import avatar, social_tabs %}
 {% block title %}Social — DiscTrack{% endblock %}
 {% block content %}
 <div class="page-header">
   <h1>Social</h1>
 </div>
+
+{{ social_tabs('friends') }}
 
 <div class="social-search">
   <form method="GET" class="search-form">
@@ -18,7 +20,8 @@
     <input type="text" name="county" value="{{ search_county }}" placeholder="County (optional)">
     <button type="submit" class="btn btn-primary">Search</button>
   </form>
-  <p class="hint">Picking a state finds players in that area who've chosen to be discoverable.</p>
+  <p class="search-hint">Picking a state finds players in that area who've chosen to be discoverable.</p>
+  <p class="search-hint">You can set your own state and county in your profile options (the cog icon, top right).</p>
   {% if searched %}
     {% if not search_results %}
     <p class="hint">No users found.</p>

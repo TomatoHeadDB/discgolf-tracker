@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% from "_macros.html" import social_tabs, group_banner %}
+{% block title %}Groups — DiscTrack{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Social</h1>
+  <a href="{{ url_for('group_new') }}" class="btn btn-primary">+ Create a group</a>
+</div>
+
+{{ social_tabs('groups') }}
+
+<section class="social-section">
+  <h2>My Groups</h2>
+  {% if not my_groups %}
+  <p class="hint">You're not in any groups yet. Create one, use an invite link someone sent you, or search below.</p>
+  {% else %}
+  <div class="group-grid">
+    {% for m in my_groups %}
+    <a class="group-card" href="{{ url_for('group_view', group_id=m.group.id) }}">
+      {{ group_banner(m.group, "thumb") }}
+      <div class="group-card-body">
+        <h3>{{ m.group.name }}</h3>
+        <p class="group-card-meta">
+          {{ m.group.active_member_count }} member{{ '' if m.group.active_member_count == 1 else 's' }}
+          {% if m.role == 'owner' %}<span class="badge-chip badge-owner">Owner</span>
+          {% elif m.role == 'admin' %}<span class="badge-chip">Admin</span>{% endif %}
+          {% if waiting.get(m.group_id) %}<span class="badge-chip badge-alert">{{ waiting[m.group_id] }} request{{ '' if waiting[m.group_id] == 1 else 's' }}</span>{% endif %}
+        </p>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <p class="search-hint">You can own up to {{ max_owned }} groups.</p>
+</section>
+
+{% if my_pending %}
+<section class="social-section">
+  <h2>Waiting for Approval</h2>
+  <ul class="connection-list">
+    {% for m in my_pending %}
+    <li>
+      <a href="{{ url_for('group_view', group_id=m.group.id) }}">{{ m.group.name }}</a>
+      <span class="hint">waiting for an admin</span>
+      <form method="POST" action="{{ url_for('group_leave', group_id=m.group.id) }}" class="inline-form">
+        <button type="submit" class="btn btn-small btn-ghost">Cancel request</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section class="social-section">
+  <h2>Find Groups</h2>
+  <form method="GET" class="search-form">
+    <input type="text" name="q" value="{{ search_q }}" placeholder="Group name...">
+    <select name="state" aria-label="State">
+      <option value="">Any state</option>
+      {% for code, name in US_STATES.items() %}
+      <option value="{{ code }}" {% if search_state == code %}selected{% endif %}>{{ name }}</option>
+      {% endfor %}
+    </select>
+    <input type="text" name="county" value="{{ search_county }}" placeholder="County (optional)">
+    <button type="submit" class="btn btn-primary">Search</button>
+  </form>
+  <p class="search-hint">Only groups that chose to advertise their region show up here. Private groups are joined through an invite link.</p>
+
+  {% if searched %}
+    {% if default_region %}
+    <p class="search-hint">Showing groups in {{ US_STATES[search_state] }}, your state.</p>
+    {% endif %}
+    {% if not results %}
+    <p class="hint">No groups found.</p>
+    {% else %}
+    <div class="group-grid">
+      {% for g in results %}
+      <a class="group-card" href="{{ url_for('group_view', group_id=g.id) }}">
+        {{ group_banner(g, "thumb") }}
+        <div class="group-card-body">
+          <h3>{{ g.name }}</h3>
+          <p class="group-card-meta">
+            {% if g.county %}{{ g.county }}, {% endif %}{{ g.state }} ·
+            {{ g.active_member_count }} member{{ '' if g.active_member_count == 1 else 's' }}
+            <span class="badge-chip">{{ 'Open' if g.join_mode == 'open' else 'Approval' }}</span>
+            {% if g.id in my_group_ids %}<span class="badge-chip badge-owner">Joined</span>{% endif %}
+          </p>
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
+  {% endif %}
+</section>
+{% endblock %}

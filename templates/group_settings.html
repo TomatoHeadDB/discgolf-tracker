@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% from "_macros.html" import social_tabs, group_banner, group_nav, region_fields %}
+{% block title %}{{ group.name }} Settings — DiscTrack{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Social</h1>
+  <a href="{{ url_for('groups_home') }}" class="btn btn-ghost">← All groups</a>
+</div>
+{{ social_tabs('groups') }}
+
+<div class="group-title-row">
+  <h2 class="group-title">{{ group.name }}</h2>
+  {% if is_owner %}<span class="badge-chip badge-owner">Owner</span>{% else %}<span class="badge-chip">Admin</span>{% endif %}
+</div>
+{{ group_nav(group, 'settings', can_settings) }}
+
+<div class="account-layout">
+  <div class="account-card">
+    <h3>Group details</h3>
+    {{ group_banner(group, "thumb") }}
+    <form method="POST" enctype="multipart/form-data">
+      <input type="hidden" name="action" value="details">
+      <label>Group name
+        <input type="text" name="name" value="{{ group.name }}" required minlength="3" maxlength="60">
+      </label>
+      <label>Description
+        <textarea name="description" rows="4" maxlength="1000">{{ group.description or '' }}</textarea>
+      </label>
+      <label>Banner image
+        <input type="file" name="banner" accept="image/png,image/jpeg,image/webp">
+      </label>
+      <p class="hint">Wide images work best (about 1200×300); other shapes are center-cropped.</p>
+      {% if group.banner_filename %}
+      <label class="checkbox-label">
+        <input type="checkbox" name="remove_banner"> Remove banner (go back to the DiscTrack logo)
+      </label>
+      {% endif %}
+      {{ region_fields(group.state, group.county, group.advertise_region) }}
+      <button type="submit" class="btn btn-primary">Save details</button>
+    </form>
+  </div>
+
+  {% if is_owner %}
+  <div class="account-card">
+    <h3>Joining &amp; events</h3>
+    <form method="POST">
+      <input type="hidden" name="action" value="joining">
+      <label>Who can join
+        <select name="join_mode">
+          <option value="open" {% if group.join_mode == 'open' %}selected{% endif %}>Open — anyone who finds the group or has the link</option>
+          <option value="approval" {% if group.join_mode == 'approval' %}selected{% endif %}>Approval required</option>
+        </select>
+      </label>
+      <label>Who can create events
+        <select name="event_policy">
+          <option value="selected" {% if group.event_policy == 'selected' %}selected{% endif %}>Only you and members you choose (set on the Members tab)</option>
+          <option value="members" {% if group.event_policy == 'members' %}selected{% endif %}>Every member</option>
+        </select>
+      </label>
+      <p class="hint">Events themselves arrive in the next update; this rule is saved now.</p>
+      <button type="submit" class="btn btn-primary">Save rules</button>
+    </form>
+
+    <h3 class="settings-subhead">Invite link</h3>
+    <label>Current link
+      <input type="text" readonly value="{{ url_for('group_invite', code=group.invite_code, _external=True) }}" onclick="this.select()">
+    </label>
+    <form method="POST" onsubmit="return confirm('Reset the invite link? The old link will stop working.');">
+      <input type="hidden" name="action" value="reset_invite">
+      <button type="submit" class="btn btn-small btn-ghost">Reset invite link</button>
+    </form>
+  </div>
+
+  <div class="account-card danger-card">
+    <h3>Delete group</h3>
+    <p class="hint" style="margin-top:0">Permanently removes the group and its memberships. Members' own rounds and accounts are not affected. This can't be undone.</p>
+    <form method="POST" action="{{ url_for('group_delete', group_id=group.id) }}">
+      <label>Type the group name to confirm
+        <input type="text" name="confirm_name" autocomplete="off" required>
+      </label>
+      <button type="submit" class="btn btn-danger">Delete group</button>
+    </form>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

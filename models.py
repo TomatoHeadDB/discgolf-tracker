@@ -1,4 +1,5 @@
 import json
+import secrets
 from datetime import datetime, timezone
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
@@ -165,3 +166,77 @@ class Connection(db.Model):
 
     requester = db.relationship("User", foreign_keys=[requester_id])
     recipient = db.relationship("User", foreign_keys=[recipient_id])
+
+
+class Group(db.Model):
+    """A group of players. The creator is the owner. Groups are private by
+    default: they only appear in search when advertise_region is on, and
+    otherwise can only be joined through their invite link."""
+
+    __tablename__ = "disc_groups"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(80), nullable=False, index=True)
+    description = db.Column(db.Text, nullable=True)
+    banner_filename = db.Column(db.String(255), nullable=True)
+    owner_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+
+    # open = anyone who finds the group can join; approval = requests wait
+    # for an owner/admin with the "manage members" permission.
+    join_mode = db.Column(db.String(20), nullable=False, default="open")
+    # selected = owner + members the owner has ticked can create events;
+    # members = every active member can.
+    event_policy = db.Column(db.String(20), nullable=False, default="selected")
+
+    # Region advertising (same idea as the per-user setting)
+    advertise_region = db.Column(db.Boolean, nullable=False, default=False)
+    state = db.Column(db.String(2), nullable=True, index=True)
+    county = db.Column(db.String(120), nullable=True)
+
+    invite_code = db.Column(
+        db.String(40), unique=True, nullable=False, default=lambda: secrets.token_urlsafe(9)
+    )
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    owner = db.relationship("User", foreign_keys=[owner_id])
+    members = db.relationship(
+        "GroupMember", backref="group", lazy=True, cascade="all, delete-orphan"
+    )
+
+    @property
+    def active_member_count(self):
+        return GroupMember.query.filter_by(group_id=self.id, status="active").count()
+
+
+class GroupMember(db.Model):
+    """One user's membership in a group. Also holds that member's own
+    preferences for the group (score sharing, event emails) and, for
+    admins, the specific permissions the owner granted them."""
+
+    __tablename__ = "group_members"
+    __table_args__ = (db.UniqueConstraint("group_id", "user_id", name="uq_group_member"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey("disc_groups.id"), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+
+    role = db.Column(db.String(20), nullable=False, default="member")  # owner | admin | member
+    status = db.Column(db.String(20), nullable=False, default="active")  # active | pending
+
+    # Admin permissions (the owner implicitly has all of them)
+    perm_edit_group = db.Column(db.Boolean, nullable=False, default=False)
+    perm_manage_members = db.Column(db.Boolean, nullable=False, default=False)
+    perm_moderate_posts = db.Column(db.Boolean, nullable=False, default=False)
+    # Can create events when the group's event_policy is "selected"
+    can_create_events = db.Column(db.Boolean, nullable=False, default=False)
+
+    # The member's own choices
+    share_scores = db.Column(db.Boolean, nullable=False, default=False)
+    email_notify = db.Column(db.Boolean, nullable=False, default=False)
+
+    joined_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    user = db.relationship(
+        "User",
+        backref=db.backref("group_memberships", lazy=True, cascade="all, delete-orphan"),
+    )

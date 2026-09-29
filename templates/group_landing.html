@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% from "_macros.html" import social_tabs, group_banner %}
+{% block title %}{{ group.name }} — DiscTrack{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Social</h1>
+  <a href="{{ url_for('groups_home') }}" class="btn btn-ghost">← All groups</a>
+</div>
+{{ social_tabs('groups') }}
+
+{{ group_banner(group, "full", code) }}
+<div class="group-title-row">
+  <h2 class="group-title">{{ group.name }}</h2>
+  <span class="badge-chip">{{ 'Open to join' if group.join_mode == 'open' else 'Approval required' }}</span>
+</div>
+<p class="group-card-meta">
+  {{ group.active_member_count }} member{{ '' if group.active_member_count == 1 else 's' }}
+  {% if group.advertise_region and group.state %} · {% if group.county %}{{ group.county }}, {% endif %}{{ group.state }}{% endif %}
+</p>
+
+{% if group.description %}<p class="group-description">{{ group.description }}</p>{% endif %}
+
+<div class="landing-action">
+  {% if pending %}
+  <p class="hint">Your request to join is waiting for approval.</p>
+  <form method="POST" action="{{ url_for('group_leave', group_id=group.id) }}" class="inline-form">
+    <button type="submit" class="btn btn-ghost">Cancel request</button>
+  </form>
+  {% else %}
+  <form method="POST" action="{{ url_for('group_join', group_id=group.id) }}">
+    {% if code %}<input type="hidden" name="code" value="{{ code }}">{% endif %}
+    <button type="submit" class="btn btn-primary">{{ 'Join group' if group.join_mode == 'open' else 'Request to join' }}</button>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% from "_macros.html" import social_tabs, region_fields %}
+{% block title %}Create a Group — DiscTrack{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Create a Group</h1>
+  <a href="{{ url_for('groups_home') }}" class="btn btn-ghost">← Back to Groups</a>
+</div>
+
+<div class="account-layout">
+  <div class="account-card">
+    <form method="POST" enctype="multipart/form-data">
+      <label>Group name
+        <input type="text" name="name" value="{{ form.get('name', '') }}" required minlength="3" maxlength="60" autofocus>
+      </label>
+      <label>Description
+        <textarea name="description" rows="4" maxlength="1000" placeholder="Who is this group for? When and where do you play?">{{ form.get('description', '') }}</textarea>
+      </label>
+      <label>Banner image (optional)
+        <input type="file" name="banner" accept="image/png,image/jpeg,image/webp">
+      </label>
+      <p class="hint">Wide images work best (about 1200×300); other shapes are center-cropped. Leave empty to use the DiscTrack logo.</p>
+
+      <label>Joining
+        <select name="join_mode">
+          <option value="open" {% if form.get('join_mode') != 'approval' %}selected{% endif %}>Open — anyone with the link (or who finds it) can join</option>
+          <option value="approval" {% if form.get('join_mode') == 'approval' %}selected{% endif %}>Approval required — you or your admins approve each request</option>
+        </select>
+      </label>
+
+      {{ region_fields(form.get('state', ''), form.get('county', ''), form.get('advertise_region')) }}
+
+      <button type="submit" class="btn btn-primary">Create Group</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

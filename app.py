@@ -4,6 +4,8 @@ import csv
 import io
 import re
 import json
+import hmac
+import secrets
 from datetime import datetime
 from flask import (
     Flask,
@@ -29,8 +31,19 @@ from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
 from werkzeug.middleware.proxy_fix import ProxyFix
 from PIL import Image, ImageOps
+from sqlalchemy.exc import IntegrityError
 
-from models import db, User, Disc, Round, RoundPlayerScore, ThrowMeasurement, Connection
+from models import (
+    db,
+    User,
+    Disc,
+    Round,
+    RoundPlayerScore,
+    ThrowMeasurement,
+    Connection,
+    Group,
+    GroupMember,
+)
 
 load_dotenv()
 
@@ -38,6 +51,12 @@ CATEGORIES = ["Putter", "Midrange", "Fairway Driver", "Distance Driver"]
 ALLOWED_PHOTO_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
 MAX_PHOTO_BYTES = 8 * 1024 * 1024  # 8 MB
 AVATAR_SIZE = 256  # px, square
+BANNER_SIZE = (1200, 300)  # px, 4:1 group banner
+MAX_OWNED_GROUPS = 5
+
+# Refuse absurdly large images outright (Pillow raises at 2x this) so one
+# upload can't exhaust the small container's memory.
+Image.MAX_IMAGE_PIXELS = 25_000_000
 
 US_STATES = {
     "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
@@ -674,6 +693,452 @@ def create_app():
             pending_from_them=pending_from_them,
             pending_connection=conn,
         )
+
+    # ---------- Groups ----------
+    #
+    # Roles: "owner" (creator, can do everything), "admin" (only the
+    # permissions the owner granted), "member". Membership status is
+    # "active" or "pending" (waiting for approval on approval-only groups).
+    # Non-members get a 404 on management pages so private groups don't
+    # reveal that they exist.
+
+    def _get_group_or_404(group_id):
+        group = db.session.get(Group, group_id)
+        if group is None:
+            abort(404)
+        return group
+
+    def _membership(group_id, user_id, active_only=True):
+        m = GroupMember.query.filter_by(group_id=group_id, user_id=user_id).first()
+        if m is None or (active_only and m.status != "active"):
+            return None
+        return m
+
+    def _can(member, perm):
+        """Owner can do everything; admins only what they were granted."""
+        if member is None or member.status != "active":
+            return False
+        if member.role == "owner":
+            return True
+        if member.role == "admin":
+            return bool(getattr(member, f"perm_{perm}", False))
+        return False
+
+    def _require_member(group_id):
+        group = _get_group_or_404(group_id)
+        me = _membership(group.id, current_user.id)
+        if me is None:
+            abort(404)
+        return group, me
+
+    def _code_matches(group, code):
+        return bool(code) and hmac.compare_digest(
+            code.encode("utf-8"), group.invite_code.encode("utf-8")
+        )
+
+    def _region_from_form():
+        state = request.form.get("state", "").strip().upper()
+        state = state if state in US_STATES else None
+        county = normalize_county(request.form.get("county")) if state else None
+        advertise = request.form.get("advertise_region") == "on" and state is not None
+        return state, county, advertise
+
+    def _valid_group_name(name):
+        return 3 <= len(name) <= 60
+
+    def _save_banner(file):
+        """Crop/resize an uploaded banner to a wide JPEG. Returns the new
+        filename, or None (after flashing why) if nothing usable was sent."""
+        if not file or not file.filename:
+            return None
+        if not _allowed_photo(file.filename):
+            flash("Banner not saved: use a JPG, PNG, or WEBP image.", "error")
+            return None
+        try:
+            img = Image.open(file.stream)
+            img = ImageOps.exif_transpose(img)
+            img = ImageOps.fit(img.convert("RGB"), BANNER_SIZE)
+        except Exception:
+            flash("Banner not saved: that file couldn't be read as an image.", "error")
+            return None
+        name = f"banner_{uuid.uuid4().hex}.jpg"
+        img.save(os.path.join(app.config["UPLOAD_FOLDER"], name), "JPEG", quality=85)
+        return name
+
+    @app.route("/social/groups")
+    @login_required
+    def groups_home():
+        my_rows = (
+            GroupMember.query.filter_by(user_id=current_user.id)
+            .join(Group, GroupMember.group_id == Group.id)
+            .order_by(Group.name)
+            .all()
+        )
+        my_groups = [m for m in my_rows if m.status == "active"]
+        my_pending = [m for m in my_rows if m.status == "pending"]
+        my_group_ids = {m.group_id for m in my_rows}
+
+        # How many join requests are waiting on groups I can approve for
+        waiting = {}
+        for m in my_groups:
+            if _can(m, "manage_members"):
+                n = GroupMember.query.filter_by(group_id=m.group_id, status="pending").count()
+                if n:
+                    waiting[m.group_id] = n
+
+        q = request.args.get("q", "").strip()
+        state = request.args.get("state", "").strip().upper()
+        if state not in US_STATES:
+            state = ""
+        county = normalize_county(request.args.get("county")) if state else None
+        searched = bool(q or state)
+        default_region = False
+        if not searched and current_user.state:
+            # Nothing typed yet: suggest groups advertising in my own state.
+            state = current_user.state
+            searched = True
+            default_region = True
+
+        results = []
+        if searched:
+            query = Group.query.filter(Group.advertise_region.is_(True))
+            if q:
+                query = query.filter(Group.name.ilike(f"%{q}%"))
+            if state:
+                query = query.filter(Group.state == state)
+            if county:
+                query = query.filter(db.func.lower(Group.county) == county.lower())
+            results = query.order_by(Group.name).limit(30).all()
+
+        return render_template(
+            "groups.html",
+            my_groups=my_groups,
+            my_pending=my_pending,
+            my_group_ids=my_group_ids,
+            waiting=waiting,
+            search_q=q,
+            search_state=state,
+            search_county=county or "",
+            searched=searched,
+            default_region=default_region,
+            results=results,
+            max_owned=MAX_OWNED_GROUPS,
+        )
+
+    @app.route("/social/groups/new", methods=["GET", "POST"])
+    @login_required
+    @limiter.limit("10 per hour", methods=["POST"])
+    def group_new():
+        owned = Group.query.filter_by(owner_id=current_user.id).count()
+        if request.method == "POST":
+            if owned >= MAX_OWNED_GROUPS:
+                flash(f"You can own up to {MAX_OWNED_GROUPS} groups.", "error")
+                return redirect(url_for("groups_home"))
+            name = request.form.get("name", "").strip()
+            if not _valid_group_name(name):
+                flash("Group name must be 3-60 characters.", "error")
+                return render_template("group_form.html", form=request.form)
+            join_mode = request.form.get("join_mode")
+            if join_mode not in ("open", "approval"):
+                join_mode = "open"
+            state, county, advertise = _region_from_form()
+            group = Group(
+                name=name,
+                description=request.form.get("description", "").strip()[:1000] or None,
+                owner_id=current_user.id,
+                join_mode=join_mode,
+                state=state,
+                county=county,
+                advertise_region=advertise,
+            )
+            db.session.add(group)
+            db.session.flush()  # assigns group.id for the membership row
+            db.session.add(
+                GroupMember(
+                    group_id=group.id,
+                    user_id=current_user.id,
+                    role="owner",
+                    status="active",
+                    perm_edit_group=True,
+                    perm_manage_members=True,
+                    perm_moderate_posts=True,
+                    can_create_events=True,
+                )
+            )
+            banner = _save_banner(request.files.get("banner"))
+            if banner:
+                group.banner_filename = banner
+            db.session.commit()
+            flash(f'Created "{group.name}".', "success")
+            return redirect(url_for("group_view", group_id=group.id))
+        return render_template("group_form.html", form={})
+
+    @app.route("/groups/<int:group_id>")
+    @login_required
+    def group_view(group_id):
+        group = _get_group_or_404(group_id)
+        me = _membership(group.id, current_user.id, active_only=False)
+        if me is not None and me.status == "active":
+            return render_template(
+                "group_view.html",
+                group=group,
+                me=me,
+                can_settings=_can(me, "edit_group"),
+                can_invite=_can(me, "manage_members"),
+            )
+        # Not (yet) a member: show the join page, but only for groups that
+        # advertise themselves or that this user has already requested.
+        if not group.advertise_region and me is None:
+            abort(404)
+        return render_template(
+            "group_landing.html", group=group, pending=me is not None, code=None
+        )
+
+    @app.route("/groups/invite/<code>")
+    @login_required
+    def group_invite(code):
+        group = Group.query.filter_by(invite_code=code).first()
+        if group is None:
+            abort(404)
+        me = _membership(group.id, current_user.id, active_only=False)
+        if me is not None and me.status == "active":
+            return redirect(url_for("group_view", group_id=group.id))
+        return render_template(
+            "group_landing.html", group=group, pending=me is not None, code=code
+        )
+
+    @app.route("/groups/<int:group_id>/banner")
+    @login_required
+    def group_banner(group_id):
+        group = _get_group_or_404(group_id)
+        if not group.banner_filename:
+            abort(404)
+        allowed = (
+            group.advertise_region
+            or _membership(group.id, current_user.id, active_only=False) is not None
+            or _code_matches(group, request.args.get("code", ""))
+        )
+        if not allowed:
+            abort(404)
+        resp = send_from_directory(
+            app.config["UPLOAD_FOLDER"], group.banner_filename, max_age=60 * 60 * 24 * 30
+        )
+        resp.cache_control.public = False
+        resp.cache_control.private = True
+        return resp
+
+    @app.route("/groups/<int:group_id>/join", methods=["POST"])
+    @login_required
+    def group_join(group_id):
+        group = _get_group_or_404(group_id)
+        if not group.advertise_region and not _code_matches(group, request.form.get("code", "")):
+            abort(404)
+        existing = _membership(group.id, current_user.id, active_only=False)
+        if existing is not None:
+            if existing.status == "active":
+                flash("You're already in this group.", "error")
+            else:
+                flash("Your request is already waiting for approval.", "error")
+            return redirect(url_for("group_view", group_id=group.id))
+        status = "active" if group.join_mode == "open" else "pending"
+        db.session.add(
+            GroupMember(group_id=group.id, user_id=current_user.id, role="member", status=status)
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()  # double-click / race: membership already exists
+            return redirect(url_for("group_view", group_id=group.id))
+        if status == "active":
+            flash(f'You joined "{group.name}".', "success")
+        else:
+            flash("Request sent. An admin will review it.", "success")
+        return redirect(url_for("group_view", group_id=group.id))
+
+    @app.route("/groups/<int:group_id>/leave", methods=["POST"])
+    @login_required
+    def group_leave(group_id):
+        group = _get_group_or_404(group_id)
+        m = _membership(group.id, current_user.id, active_only=False)
+        if m is None:
+            abort(404)
+        if m.role == "owner":
+            flash(
+                "Owners can't leave their own group. Transfer ownership or delete the group first.",
+                "error",
+            )
+            return redirect(url_for("group_members", group_id=group.id))
+        was_pending = m.status == "pending"
+        db.session.delete(m)
+        db.session.commit()
+        flash("Request cancelled." if was_pending else f'You left "{group.name}".', "success")
+        return redirect(url_for("groups_home"))
+
+    @app.route("/groups/<int:group_id>/prefs", methods=["POST"])
+    @login_required
+    def group_prefs(group_id):
+        group, me = _require_member(group_id)
+        me.share_scores = request.form.get("share_scores") == "on"
+        me.email_notify = request.form.get("email_notify") == "on"
+        db.session.commit()
+        flash("Group preferences saved.", "success")
+        return redirect(url_for("group_view", group_id=group.id))
+
+    @app.route("/groups/<int:group_id>/members")
+    @login_required
+    def group_members(group_id):
+        group, me = _require_member(group_id)
+        rows = (
+            GroupMember.query.filter_by(group_id=group.id)
+            .join(User, GroupMember.user_id == User.id)
+            .order_by(User.username)
+            .all()
+        )
+        role_order = {"owner": 0, "admin": 1, "member": 2}
+        active = sorted(
+            (m for m in rows if m.status == "active"),
+            key=lambda m: (role_order.get(m.role, 3), m.user.username.lower()),
+        )
+        can_manage = _can(me, "manage_members")
+        pending = [m for m in rows if m.status == "pending"] if can_manage else []
+        return render_template(
+            "group_members.html",
+            group=group,
+            me=me,
+            members=active,
+            pending=pending,
+            can_manage=can_manage,
+            is_owner=me.role == "owner",
+            can_settings=_can(me, "edit_group"),
+        )
+
+    @app.route("/groups/<int:group_id>/members/<int:user_id>/<action>", methods=["POST"])
+    @login_required
+    def group_member_action(group_id, user_id, action):
+        group, me = _require_member(group_id)
+        target = GroupMember.query.filter_by(group_id=group.id, user_id=user_id).first()
+        if target is None:
+            abort(404)
+        is_owner = me.role == "owner"
+        name = target.user.username
+
+        if action in ("approve", "decline"):
+            if not _can(me, "manage_members") or target.status != "pending":
+                abort(403)
+            if action == "approve":
+                target.status = "active"
+                flash(f"{name} approved.", "success")
+            else:
+                db.session.delete(target)
+                flash(f"Request from {name} declined.", "success")
+
+        elif action == "remove":
+            if (
+                not _can(me, "manage_members")
+                or target.status != "active"
+                or target.role == "owner"
+                or target.user_id == current_user.id
+                or (target.role == "admin" and not is_owner)  # only the owner removes admins
+            ):
+                abort(403)
+            db.session.delete(target)
+            flash(f"{name} removed from the group.", "success")
+
+        elif action == "update":  # owner only: admin role, permissions, event access
+            if not is_owner or target.status != "active" or target.role == "owner":
+                abort(403)
+            make_admin = request.form.get("role") == "admin"
+            target.role = "admin" if make_admin else "member"
+            target.perm_edit_group = make_admin and request.form.get("perm_edit_group") == "on"
+            target.perm_manage_members = make_admin and request.form.get("perm_manage_members") == "on"
+            target.perm_moderate_posts = make_admin and request.form.get("perm_moderate_posts") == "on"
+            target.can_create_events = request.form.get("can_create_events") == "on"
+            flash(f"Updated {name}.", "success")
+
+        elif action == "transfer":
+            if not is_owner or target.status != "active" or target.role == "owner":
+                abort(403)
+            target.role = "owner"
+            target.perm_edit_group = target.perm_manage_members = target.perm_moderate_posts = True
+            target.can_create_events = True
+            me.role = "admin"  # previous owner stays on as a fully-permissioned admin
+            me.perm_edit_group = me.perm_manage_members = me.perm_moderate_posts = True
+            group.owner_id = target.user_id
+            flash(f"{name} is now the owner. You're an admin.", "success")
+
+        else:
+            abort(404)
+
+        db.session.commit()
+        return redirect(url_for("group_members", group_id=group.id))
+
+    @app.route("/groups/<int:group_id>/settings", methods=["GET", "POST"])
+    @login_required
+    def group_settings(group_id):
+        group, me = _require_member(group_id)
+        is_owner = me.role == "owner"
+        if not _can(me, "edit_group"):
+            abort(403)
+
+        if request.method == "POST":
+            action = request.form.get("action")
+
+            if action == "details":
+                name = request.form.get("name", "").strip()
+                if not _valid_group_name(name):
+                    flash("Group name must be 3-60 characters.", "error")
+                    return redirect(url_for("group_settings", group_id=group.id))
+                group.name = name
+                group.description = request.form.get("description", "").strip()[:1000] or None
+                group.state, group.county, group.advertise_region = _region_from_form()
+                new_banner = _save_banner(request.files.get("banner"))
+                if new_banner:
+                    _delete_photo_file(group.banner_filename)
+                    group.banner_filename = new_banner
+                elif request.form.get("remove_banner") == "on":
+                    _delete_photo_file(group.banner_filename)
+                    group.banner_filename = None
+                db.session.commit()
+                flash("Group details saved.", "success")
+
+            elif action == "joining" and is_owner:
+                join_mode = request.form.get("join_mode")
+                if join_mode in ("open", "approval"):
+                    group.join_mode = join_mode
+                policy = request.form.get("event_policy")
+                if policy in ("selected", "members"):
+                    group.event_policy = policy
+                db.session.commit()
+                flash("Group rules saved.", "success")
+
+            elif action == "reset_invite" and is_owner:
+                group.invite_code = secrets.token_urlsafe(9)
+                db.session.commit()
+                flash("Invite link reset. The old link no longer works.", "success")
+
+            else:
+                abort(403)
+            return redirect(url_for("group_settings", group_id=group.id))
+
+        return render_template(
+            "group_settings.html", group=group, me=me, is_owner=is_owner, can_settings=True
+        )
+
+    @app.route("/groups/<int:group_id>/delete", methods=["POST"])
+    @login_required
+    def group_delete(group_id):
+        group, me = _require_member(group_id)
+        if me.role != "owner":
+            abort(403)
+        if request.form.get("confirm_name", "").strip() != group.name:
+            flash("Type the group's exact name to confirm deleting it.", "error")
+            return redirect(url_for("group_settings", group_id=group.id))
+        name = group.name
+        _delete_photo_file(group.banner_filename)
+        db.session.delete(group)
+        db.session.commit()
+        flash(f'Deleted "{name}".', "success")
+        return redirect(url_for("groups_home"))
 
     # ---------- JSON API (used by the flight-path canvas + multi-disc compare) ----------
 

@@ -7,3 +7,51 @@
 <span class="avatar avatar-{{ size }} avatar-initial" aria-hidden="true">{{ user.username[0]|upper }}</span>
 {%- endif %}
 {%- endmacro %}
+
+{# Friends | Groups switcher shown at the top of the Social area #}
+{% macro social_tabs(active) -%}
+<div class="sub-tabs">
+  <a class="sub-tab {{ 'sub-tab-active' if active == 'friends' else '' }}" href="{{ url_for('social') }}">Friends</a>
+  <a class="sub-tab {{ 'sub-tab-active' if active == 'groups' else '' }}" href="{{ url_for('groups_home') }}">Groups</a>
+</div>
+{%- endmacro %}
+
+{# Group banner: the uploaded image, or the DiscTrack logo as the default.
+   size: "full" (group pages) or "thumb" (lists). code: invite code, so the
+   banner loads for someone who hasn't joined a private group yet. #}
+{% macro group_banner(group, size="full", code=None) -%}
+{% if group.banner_filename -%}
+<img class="group-banner group-banner-{{ size }}" src="{{ url_for('group_banner', group_id=group.id, v=group.banner_filename, code=code) }}" alt="">
+{%- else -%}
+<div class="group-banner group-banner-{{ size }} group-banner-default"><img class="group-banner-logo" src="{{ url_for('static', filename='img/logo.png') }}" alt=""></div>
+{%- endif %}
+{%- endmacro %}
+
+{# Overview | Members | Settings tabs inside a group #}
+{% macro group_nav(group, active, can_settings) -%}
+<div class="sub-tabs">
+  <a class="sub-tab {{ 'sub-tab-active' if active == 'overview' else '' }}" href="{{ url_for('group_view', group_id=group.id) }}">Overview</a>
+  <a class="sub-tab {{ 'sub-tab-active' if active == 'members' else '' }}" href="{{ url_for('group_members', group_id=group.id) }}">Members</a>
+  {% if can_settings %}<a class="sub-tab {{ 'sub-tab-active' if active == 'settings' else '' }}" href="{{ url_for('group_settings', group_id=group.id) }}">Settings</a>{% endif %}
+</div>
+{%- endmacro %}
+
+{# Shared state/county/advertise fields for group forms #}
+{% macro region_fields(state, county, advertise) -%}
+<label>State
+  <select name="state">
+    <option value="">— not set —</option>
+    {% for code, sname in US_STATES.items() %}
+    <option value="{{ code }}" {% if state == code %}selected{% endif %}>{{ sname }}</option>
+    {% endfor %}
+  </select>
+</label>
+<label>County
+  <input type="text" name="county" value="{{ county or '' }}" placeholder="e.g. Hillsborough">
+</label>
+<label class="checkbox-label">
+  <input type="checkbox" name="advertise_region" {% if advertise %}checked{% endif %}>
+  Advertise this group to people searching my state and county
+</label>
+<p class="hint">Off = the group is private and only joinable through its invite link. On = it shows up in group searches for this region. Needs a state.</p>
+{%- endmacro %}

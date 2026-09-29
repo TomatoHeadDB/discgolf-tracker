@@ -29,7 +29,7 @@
     <div class="tab-strip">
       <a class="page-tab {{ 'nav-active' if request.endpoint == 'dashboard' else '' }}" href="{{ url_for('dashboard') }}">My Bag</a>
       <a class="page-tab {{ 'nav-active' if request.endpoint in ['rounds', 'import_rounds', 'round_detail', 'course_detail'] else '' }}" href="{{ url_for('rounds') }}">My Rounds</a>
-      <a class="page-tab {{ 'nav-active' if request.endpoint in ['social', 'public_profile'] else '' }}" href="{{ url_for('social') }}">Social</a>
+      <a class="page-tab {{ 'nav-active' if request.endpoint in ['social', 'public_profile'] or (request.endpoint or '').startswith('group') else '' }}" href="{{ url_for('social') }}">Social</a>
     </div>
   </nav>
   {% endif %}

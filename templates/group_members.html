@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% from "_macros.html" import avatar, social_tabs, group_nav %}
+{% block title %}{{ group.name }} Members — DiscTrack{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Social</h1>
+  <a href="{{ url_for('groups_home') }}" class="btn btn-ghost">← All groups</a>
+</div>
+{{ social_tabs('groups') }}
+
+<div class="group-title-row">
+  <h2 class="group-title">{{ group.name }}</h2>
+</div>
+{{ group_nav(group, 'members', can_settings) }}
+
+{% if pending %}
+<section class="social-section">
+  <h2>Join Requests</h2>
+  <ul class="connection-list">
+    {% for m in pending %}
+    <li>
+      {{ avatar(m.user, "sm") }}
+      <a href="{{ url_for('public_profile', username=m.user.username) }}">{{ m.user.username }}</a>
+      <form method="POST" action="{{ url_for('group_member_action', group_id=group.id, user_id=m.user_id, action='approve') }}" class="inline-form">
+        <button type="submit" class="btn btn-small btn-primary">Approve</button>
+      </form>
+      <form method="POST" action="{{ url_for('group_member_action', group_id=group.id, user_id=m.user_id, action='decline') }}" class="inline-form">
+        <button type="submit" class="btn btn-small btn-ghost">Decline</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section class="social-section">
+  <h2>Members ({{ members|length }})</h2>
+  <div class="members-list">
+    {% for m in members %}
+    <div class="member-row">
+      <div class="member-main">
+        {{ avatar(m.user, "sm") }}
+        <a href="{{ url_for('public_profile', username=m.user.username) }}">{{ m.user.username }}</a>
+        {% if m.user_id == current_user.id %}<span class="you-badge">You</span>{% endif %}
+        {% if m.role == 'owner' %}<span class="badge-chip badge-owner">Owner</span>
+        {% elif m.role == 'admin' %}<span class="badge-chip">Admin</span>{% endif %}
+        {% if group.event_policy == 'selected' and m.can_create_events and m.role != 'owner' %}<span class="badge-chip">Can create events</span>{% endif %}
+      </div>
+
+      <div class="member-actions">
+        {% if can_manage and m.role != 'owner' and m.user_id != current_user.id and (is_owner or m.role == 'member') %}
+        <form method="POST" action="{{ url_for('group_member_action', group_id=group.id, user_id=m.user_id, action='remove') }}" class="inline-form" onsubmit="return confirm('Remove this member from the group?');">
+          <button type="submit" class="btn btn-small btn-danger">Remove</button>
+        </form>
+        {% endif %}
+      </div>
+
+      {% if is_owner and m.role != 'owner' %}
+      <details class="member-manage">
+        <summary>Role &amp; permissions</summary>
+        <form method="POST" action="{{ url_for('group_member_action', group_id=group.id, user_id=m.user_id, action='update') }}">
+          <label>Role
+            <select name="role">
+              <option value="member" {% if m.role == 'member' %}selected{% endif %}>Member</option>
+              <option value="admin" {% if m.role == 'admin' %}selected{% endif %}>Admin</option>
+            </select>
+          </label>
+          <p class="hint">Admin permissions (only apply when the role is Admin):</p>
+          <label class="checkbox-label"><input type="checkbox" name="perm_edit_group" {% if m.perm_edit_group %}checked{% endif %}> Edit group details, banner &amp; region</label>
+          <label class="checkbox-label"><input type="checkbox" name="perm_manage_members" {% if m.perm_manage_members %}checked{% endif %}> Approve requests &amp; remove members</label>
+          <label class="checkbox-label"><input type="checkbox" name="perm_moderate_posts" {% if m.perm_moderate_posts %}checked{% endif %}> Moderate posts</label>
+          <label class="checkbox-label"><input type="checkbox" name="can_create_events" {% if m.can_create_events %}checked{% endif %}> Can create events{% if group.event_policy == 'members' %} (everyone can right now){% endif %}</label>
+          <button type="submit" class="btn btn-small btn-primary">Save</button>
+        </form>
+        <form method="POST" action="{{ url_for('group_member_action', group_id=group.id, user_id=m.user_id, action='transfer') }}" onsubmit="return confirm('Make this person the owner? You will become an admin.');">
+          <button type="submit" class="btn btn-small btn-ghost">Make owner</button>
+        </form>
+      </details>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% if me.role == 'owner' %}
+  <p class="search-hint">As owner you can't leave the group. Make someone else the owner, or delete the group in Settings.</p>
+  {% endif %}
+</section>
+{% endblock %}

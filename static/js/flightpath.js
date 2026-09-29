@@ -40,7 +40,7 @@
       const REFERENCE_WEIGHT = 175;
       const GRAMS_PER_STEP = 25; // grams per ~1 full flight-number step
       const deltaSteps = (REFERENCE_WEIGHT - disc.weight_grams) / GRAMS_PER_STEP;
-      turn = clamp(turn - deltaSteps * 0.6, -5, 1);
+      turn = clamp(turn - deltaSteps * 0.6, -5, 2);
       fade = clamp(fade - deltaSteps * 0.4, 0, 5);
     }
 
