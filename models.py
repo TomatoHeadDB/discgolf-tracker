@@ -20,6 +20,13 @@ class User(UserMixin, db.Model):
     # include other players too.
     udisc_display_name = db.Column(db.String(120), nullable=True)
     bag_public = db.Column(db.Boolean, default=False, nullable=False)
+    # Profile picture (filename inside instance/uploads, resized square JPEG)
+    profile_photo = db.Column(db.String(255), nullable=True)
+    # Home region, used for friend/group discovery. Only searchable by
+    # others when advertise_region is on.
+    state = db.Column(db.String(2), nullable=True, index=True)
+    county = db.Column(db.String(120), nullable=True)
+    advertise_region = db.Column(db.Boolean, default=False, nullable=False)
 
     discs = db.relationship(
         "Disc", backref="owner", lazy=True, cascade="all, delete-orphan"

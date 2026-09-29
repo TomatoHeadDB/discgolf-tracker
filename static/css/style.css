@@ -740,3 +740,26 @@ th.sortable-col.sort-desc::after { content: '↓'; opacity: 1; }
 
 .nav-user-link { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; }
 .nav-user-link:hover { color: var(--text); text-decoration: underline; }
+
+/* ---------- Avatars + nav account controls ---------- */
+.avatar { border-radius: 50%; object-fit: cover; flex-shrink: 0; vertical-align: middle; }
+.avatar-sm { width: 28px; height: 28px; }
+.avatar-lg { width: 72px; height: 72px; }
+.avatar-initial {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--primary);
+  color: #fff;
+  font-weight: 600;
+}
+.avatar-sm.avatar-initial { font-size: 0.85rem; }
+.avatar-lg.avatar-initial { font-size: 1.8rem; }
+.nav-user { display: flex; align-items: center; gap: 8px; color: var(--text); font-weight: 500; }
+.nav-cog { display: inline-flex; align-items: center; color: var(--text-muted); }
+.nav-cog:hover, .nav-cog-active { color: var(--text); }
+.avatar-edit { display: flex; align-items: center; gap: 16px; margin-bottom: 4px; }
+.profile-heading { display: flex; align-items: center; gap: 14px; }
+.search-form { display: flex; flex-wrap: wrap; gap: 8px; }
+.search-form input[type="text"], .search-form select { flex: 1 1 150px; }
+.user-result-list li, .connection-list li { display: flex; align-items: center; gap: 8px; }

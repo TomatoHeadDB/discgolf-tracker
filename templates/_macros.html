@@ -1,0 +1,9 @@
+{# Small round profile picture, or a letter placeholder if none is set.
+   size: "sm" (nav/lists) or "lg" (profile pages, settings) #}
+{% macro avatar(user, size="sm") -%}
+{% if user.profile_photo -%}
+<img class="avatar avatar-{{ size }}" src="{{ url_for('avatar', user_id=user.id) }}?v={{ user.profile_photo }}" alt="">
+{%- else -%}
+<span class="avatar avatar-{{ size }} avatar-initial" aria-hidden="true">{{ user.username[0]|upper }}</span>
+{%- endif %}
+{%- endmacro %}

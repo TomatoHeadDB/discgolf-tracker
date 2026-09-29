@@ -28,6 +28,7 @@ from flask_limiter.util import get_remote_address
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
 from werkzeug.middleware.proxy_fix import ProxyFix
+from PIL import Image, ImageOps
 
 from models import db, User, Disc, Round, RoundPlayerScore, ThrowMeasurement, Connection
 
@@ -36,6 +37,30 @@ load_dotenv()
 CATEGORIES = ["Putter", "Midrange", "Fairway Driver", "Distance Driver"]
 ALLOWED_PHOTO_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
 MAX_PHOTO_BYTES = 8 * 1024 * 1024  # 8 MB
+AVATAR_SIZE = 256  # px, square
+
+US_STATES = {
+    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
+    "CA": "California", "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware",
+    "DC": "District of Columbia", "FL": "Florida", "GA": "Georgia", "HI": "Hawaii",
+    "ID": "Idaho", "IL": "Illinois", "IN": "Indiana", "IA": "Iowa", "KS": "Kansas",
+    "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
+    "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota", "MS": "Mississippi",
+    "MO": "Missouri", "MT": "Montana", "NE": "Nebraska", "NV": "Nevada",
+    "NH": "New Hampshire", "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York",
+    "NC": "North Carolina", "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma",
+    "OR": "Oregon", "PA": "Pennsylvania", "RI": "Rhode Island", "SC": "South Carolina",
+    "SD": "South Dakota", "TN": "Tennessee", "TX": "Texas", "UT": "Utah",
+    "VT": "Vermont", "VA": "Virginia", "WA": "Washington", "WV": "West Virginia",
+    "WI": "Wisconsin", "WY": "Wyoming",
+}
+
+
+def normalize_county(raw):
+    """Trim and drop a trailing 'County' so 'Hillsborough County' and
+    'hillsborough' match each other. Returns None if empty."""
+    raw = re.sub(r"\s+county$", "", (raw or "").strip(), flags=re.I).strip()
+    return raw[:120] or None
 
 
 def create_app():
@@ -77,6 +102,10 @@ def create_app():
     @login_manager.user_loader
     def load_user(user_id):
         return db.session.get(User, int(user_id))
+
+    @app.context_processor
+    def inject_globals():
+        return {"US_STATES": US_STATES}
 
     with app.app_context():
         os.makedirs(os.path.join(basedir, "instance"), exist_ok=True)
@@ -153,6 +182,25 @@ def create_app():
                     request.form.get("udisc_display_name", "").strip() or None
                 )
                 current_user.bag_public = request.form.get("bag_public") == "on"
+
+                state = request.form.get("state", "").strip().upper()
+                current_user.state = state if state in US_STATES else None
+                current_user.county = (
+                    normalize_county(request.form.get("county"))
+                    if current_user.state
+                    else None
+                )
+                # Can't advertise a region you haven't set.
+                current_user.advertise_region = (
+                    request.form.get("advertise_region") == "on"
+                    and current_user.state is not None
+                )
+
+                if request.form.get("remove_profile_photo") == "on":
+                    _delete_photo_file(current_user.profile_photo)
+                    current_user.profile_photo = None
+                _handle_avatar_upload(current_user)
+
                 db.session.commit()
                 flash("Settings updated.", "success")
 
@@ -175,6 +223,18 @@ def create_app():
             return redirect(url_for("account"))
 
         return render_template("account.html")
+
+    @app.route("/avatar/<int:user_id>")
+    @login_required
+    def avatar(user_id):
+        user = db.session.get(User, user_id)
+        if user is None or not user.profile_photo:
+            abort(404)
+        # Filenames are random per upload and templates add ?v=<filename>,
+        # so it's safe to let browsers cache these for a long time.
+        return send_from_directory(
+            app.config["UPLOAD_FOLDER"], user.profile_photo, max_age=60 * 60 * 24 * 30
+        )
 
     # ---------- Pages ----------
 
@@ -471,13 +531,27 @@ def create_app():
     @login_required
     def social():
         q = request.args.get("q", "").strip()
+        region_state = request.args.get("state", "").strip().upper()
+        if region_state not in US_STATES:
+            region_state = ""
+        region_county = normalize_county(request.args.get("county")) if region_state else None
+
         search_results = []
-        if q:
-            search_results = (
-                User.query.filter(User.username.ilike(f"%{q}%"), User.id != current_user.id)
-                .limit(20)
-                .all()
-            )
+        searched = bool(q or region_state)
+        if searched:
+            query = User.query.filter(User.id != current_user.id)
+            if q:
+                query = query.filter(User.username.ilike(f"%{q}%"))
+            if region_state:
+                # Region searches only ever return people who opted in.
+                query = query.filter(
+                    User.advertise_region.is_(True), User.state == region_state
+                )
+                if region_county:
+                    query = query.filter(
+                        db.func.lower(User.county) == region_county.lower()
+                    )
+            search_results = query.order_by(User.username).limit(50).all()
 
         pending_incoming = Connection.query.filter_by(
             recipient_id=current_user.id, status="pending"
@@ -522,6 +596,9 @@ def create_app():
         return render_template(
             "social.html",
             search_query=q,
+            search_state=region_state,
+            search_county=region_county or "",
+            searched=searched,
             search_results=search_results,
             pending_incoming=pending_incoming,
             pending_outgoing=pending_outgoing,
@@ -831,6 +908,33 @@ def create_app():
         # Replacing an existing photo — clean up the old file.
         _delete_photo_file(disc.photo_filename)
         disc.photo_filename = new_filename
+
+    def _handle_avatar_upload(user):
+        """Resize an uploaded profile picture to a small square JPEG.
+        Re-encoding through Pillow also strips EXIF metadata (phone photos
+        often embed GPS coordinates), which matters since avatars are
+        visible to other users."""
+        file = request.files.get("profile_photo")
+        if not file or not file.filename:
+            return
+        if not _allowed_photo(file.filename):
+            flash("Profile picture not saved: use a JPG, PNG, or WEBP image.", "error")
+            return
+        try:
+            img = Image.open(file.stream)
+            img = ImageOps.exif_transpose(img)  # respect phone rotation
+            img = ImageOps.fit(img.convert("RGB"), (AVATAR_SIZE, AVATAR_SIZE))
+        except Exception:
+            flash("Profile picture not saved: that file couldn't be read as an image.", "error")
+            return
+        new_filename = f"avatar_{uuid.uuid4().hex}.jpg"
+        img.save(
+            os.path.join(app.config["UPLOAD_FOLDER"], new_filename),
+            "JPEG",
+            quality=88,
+        )
+        _delete_photo_file(user.profile_photo)
+        user.profile_photo = new_filename
 
     def _disc_from_form(disc: Disc) -> Disc:
         def f(field, default=0.0):

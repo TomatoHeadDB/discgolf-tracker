@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import avatar %}
 {% block title %}Account Settings — DiscTrack{% endblock %}
 {% block content %}
 <div class="page-header">
@@ -9,8 +10,23 @@
 <div class="account-layout">
   <div class="account-card">
     <h3>Profile</h3>
-    <form method="POST">
+    <form method="POST" enctype="multipart/form-data">
       <input type="hidden" name="action" value="update_profile">
+      <div class="avatar-edit">
+        {{ avatar(current_user, "lg") }}
+        <div>
+          <label>Profile picture
+            <input type="file" name="profile_photo" accept="image/png,image/jpeg,image/webp">
+          </label>
+          {% if current_user.profile_photo %}
+          <label class="checkbox-label">
+            <input type="checkbox" name="remove_profile_photo"> Remove current picture
+          </label>
+          {% endif %}
+        </div>
+      </div>
+      <p class="hint">Shown next to your name for other DiscTrack users. Automatically cropped to a square and resized.</p>
+
       <label>Username
         <input type="text" value="{{ current_user.username }}" disabled>
       </label>
@@ -27,6 +43,23 @@
         Make my bag visible to other DiscTrack users
       </label>
       <p class="hint">When on, anyone who finds your profile (by username) can see the discs currently in your bag. Your notes, rounds, and throw measurements stay private either way.</p>
+
+      <label>State
+        <select name="state">
+          <option value="">— not set —</option>
+          {% for code, name in US_STATES.items() %}
+          <option value="{{ code }}" {% if current_user.state == code %}selected{% endif %}>{{ name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>County
+        <input type="text" name="county" value="{{ current_user.county or '' }}" placeholder="e.g. Hillsborough">
+      </label>
+      <label class="checkbox-label">
+        <input type="checkbox" name="advertise_region" {% if current_user.advertise_region %}checked{% endif %}>
+        Let people find my username when they search my state and county
+      </label>
+      <p class="hint">Off by default. When on, your username appears in friend searches for your state (and county, if set). Nothing else about you is shown, and you still choose whether to accept connection requests.</p>
 
       <button type="submit" class="btn btn-primary">Save</button>
     </form>

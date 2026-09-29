@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import avatar %}
 {% block title %}Social — DiscTrack{% endblock %}
 {% block content %}
 <div class="page-header">
@@ -6,18 +7,30 @@
 </div>
 
 <div class="social-search">
-  <form method="GET">
+  <form method="GET" class="search-form">
     <input type="text" name="q" value="{{ search_query }}" placeholder="Search by username...">
+    <select name="state" aria-label="State">
+      <option value="">Any state</option>
+      {% for code, name in US_STATES.items() %}
+      <option value="{{ code }}" {% if search_state == code %}selected{% endif %}>{{ name }}</option>
+      {% endfor %}
+    </select>
+    <input type="text" name="county" value="{{ search_county }}" placeholder="County (optional)">
     <button type="submit" class="btn btn-primary">Search</button>
   </form>
-  {% if search_query %}
+  <p class="hint">Picking a state finds players in that area who've chosen to be discoverable.</p>
+  {% if searched %}
     {% if not search_results %}
-    <p class="hint">No users found matching "{{ search_query }}".</p>
+    <p class="hint">No users found.</p>
     {% else %}
     <ul class="user-result-list">
       {% for u in search_results %}
       <li>
+        {{ avatar(u, "sm") }}
         <a href="{{ url_for('public_profile', username=u.username) }}">{{ u.username }}</a>
+        {% if u.advertise_region and u.state %}
+        <span class="hint">{% if u.county %}{{ u.county }}, {% endif %}{{ u.state }}</span>
+        {% endif %}
       </li>
       {% endfor %}
     </ul>
@@ -31,7 +44,7 @@
   <ul class="connection-list">
     {% for c in pending_incoming %}
     <li>
-      <a href="{{ url_for('public_profile', username=c.requester.username) }}">{{ c.requester.username }}</a>
+      {{ avatar(c.requester, "sm") }} <a href="{{ url_for('public_profile', username=c.requester.username) }}">{{ c.requester.username }}</a>
       <form method="POST" action="{{ url_for('respond_connection_request', connection_id=c.id) }}" class="inline-form">
         <input type="hidden" name="decision" value="accept">
         <button type="submit" class="btn btn-small btn-primary">Accept</button>
@@ -52,7 +65,7 @@
   <ul class="connection-list">
     {% for c in pending_outgoing %}
     <li>
-      <a href="{{ url_for('public_profile', username=c.recipient.username) }}">{{ c.recipient.username }}</a>
+      {{ avatar(c.recipient, "sm") }} <a href="{{ url_for('public_profile', username=c.recipient.username) }}">{{ c.recipient.username }}</a>
       <span class="hint">waiting for response</span>
     </li>
     {% endfor %}
@@ -67,7 +80,7 @@
   {% else %}
   <ul class="connection-list">
     {% for f in friends %}
-    <li><a href="{{ url_for('public_profile', username=f.username) }}">{{ f.username }}</a></li>
+    <li>{{ avatar(f, "sm") }} <a href="{{ url_for('public_profile', username=f.username) }}">{{ f.username }}</a></li>
     {% endfor %}
   </ul>
   {% endif %}
