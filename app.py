@@ -122,9 +122,9 @@ def create_app():
     def load_user(user_id):
         return db.session.get(User, int(user_id))
 
-    @app.context_processor
-    def inject_globals():
-        return {"US_STATES": US_STATES}
+    # A Jinja *global* (not a context processor value) so it is also visible
+    # inside macros imported from _macros.html, which don't see page context.
+    app.jinja_env.globals["US_STATES"] = US_STATES
 
     with app.app_context():
         os.makedirs(os.path.join(basedir, "instance"), exist_ok=True)
