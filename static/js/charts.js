@@ -115,7 +115,7 @@
 
       ctx.fillStyle = '#334155';
       ctx.textAlign = 'left';
-      ctx.fillText(truncate(c.course_name, 18), padding.left, y + rowHeight * 0.6);
+      ctx.fillText(truncate(c.label || c.course_name, 18), padding.left, y + rowHeight * 0.6);
 
       ctx.fillStyle = '#bbf7d0';
       ctx.fillRect(padding.left + 130, y + rowHeight * 0.2, barW, rowHeight * 0.5);

@@ -61,6 +61,13 @@
     <label>Color
       <input type="color" name="color" value="{{ disc.color if disc else '#3b82f6' }}">
     </label>
+    <label class="checkbox-label">
+      <input type="checkbox" name="has_secondary" {% if disc and disc.secondary_color %}checked{% endif %}>
+      Add a secondary color
+    </label>
+    <label id="secondary-wrap" {% if not (disc and disc.secondary_color) %}style="display:none"{% endif %}>Secondary color
+      <input type="color" name="secondary_color" value="{{ (disc.secondary_color if disc and disc.secondary_color else '#f59e0b') }}">
+    </label>
     <label>Weight (grams)
       <input type="number" name="weight_grams" min="100" max="200" value="{{ disc.weight_grams if disc else '' }}">
     </label>
@@ -100,6 +107,7 @@
       turn: parseFloat(form.turn.value) || 0,
       fade: parseFloat(form.fade.value) || 0,
       color: form.color.value || '#3b82f6',
+      secondary_color: form.has_secondary.checked ? form.secondary_color.value : null,
       weight_grams: form.weight_grams.value ? parseFloat(form.weight_grams.value) : null
     };
   }
@@ -108,8 +116,12 @@
     DiscFlight.drawFull(canvas, readFlightNumbers(), { throwStyle: 'RHBH' });
   }
 
-  ['speed', 'glide', 'turn', 'fade', 'color', 'weight_grams'].forEach(function (name) {
+  ['speed', 'glide', 'turn', 'fade', 'color', 'secondary_color', 'weight_grams'].forEach(function (name) {
     form[name].addEventListener('input', redraw);
+  });
+  form.has_secondary.addEventListener('change', function () {
+    document.getElementById('secondary-wrap').style.display = form.has_secondary.checked ? '' : 'none';
+    redraw();
   });
   redraw();
 

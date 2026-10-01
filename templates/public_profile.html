@@ -38,7 +38,7 @@
   {% else %}
   <div class="disc-grid">
     {% for disc in bag %}
-    <div class="disc-card" style="--disc-color: {{ disc.color }}">
+    <div class="disc-card" style="--disc-color: {{ disc.color }}; --disc-color-2: {{ disc.secondary_color or disc.color }}">
       <div class="disc-card-body">
         <h3>{{ disc.name }}</h3>
         <p class="disc-manufacturer">{{ disc.manufacturer or "—" }}</p>

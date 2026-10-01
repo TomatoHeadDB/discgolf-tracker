@@ -75,6 +75,7 @@
     turn: {{ disc.turn }},
     fade: {{ disc.fade }},
     color: "{{ disc.color }}",
+    secondary_color: {{ disc.secondary_color|tojson }},
     weight_grams: {{ disc.weight_grams or 'null' }}
   };
   const calibratedDistance = {{ avg_distance or 'null' }};

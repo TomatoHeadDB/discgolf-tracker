@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Share Round — DiscTrack{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Share Round</h1>
+  <a href="{{ url_for('rounds') }}" class="btn btn-ghost">← Back to Rounds</a>
+</div>
+
+<div class="account-layout">
+  <div class="account-card">
+    <p class="round-meta" style="margin-top:0">
+      <strong>{{ round.course_name }}</strong>{% if round.layout_name %} · {{ round.layout_name }}{% endif %}{% if round.holes %} · {{ round.holes }} holes{% endif %}<br>
+      {{ round.played_at.strftime('%B %-d, %Y') }} · Score {{ round.total_score }}{% if round.relative_score is not none %} ({{ '%+d' % round.relative_score if round.relative_score else 'E' }}){% endif %}
+    </p>
+
+    {% if not memberships %}
+    <p class="hint" style="margin-top:0">You're not in any groups yet. <a href="{{ url_for('groups_home') }}">Find or create a group</a> to share rounds with.</p>
+    {% else %}
+    <form method="POST">
+      <h3>Post to</h3>
+      <div class="share-groups">
+        {% for m in memberships %}
+        <label class="checkbox-label {{ 'share-done' if m.group_id in already else '' }}">
+          <input type="checkbox" name="group_ids" value="{{ m.group_id }}" {% if m.group_id in already %}disabled{% endif %}>
+          {{ m.group.name }}{% if m.group_id in already %} <span class="hint">already shared</span>{% endif %}
+        </label>
+        {% endfor %}
+      </div>
+
+      <h3>Other players</h3>
+      {% if companions %}
+      <label class="checkbox-label">
+        <input type="checkbox" name="include_players">
+        Include the other players' names and scores ({{ companions|length }}: {{ companions|join(', ') }})
+      </label>
+      <p class="hint">Unchecked, the post only says how many other players you played with, and their names and scores stay private.</p>
+      {% else %}
+      <p class="hint" style="margin-top:0">This was a solo round on the scorecard, so there are no other players to include.</p>
+      {% endif %}
+
+      <p class="hint">Members of the groups you pick will see your score and hole-by-hole results. You can delete the post from the feed any time, and deleting the round removes it everywhere.</p>
+      <button type="submit" class="btn btn-primary">Share to feed</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

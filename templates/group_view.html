@@ -46,6 +46,13 @@
   {% if post.kind == 'event' and item.event_info %}
   <p class="feed-event-note">suggested an event</p>
   {{ event_card(group, item.event_info, request.path) }}
+  {% elif post.kind == 'round' and item.round_info %}
+  {% set ri = item.round_info %}
+  <a class="round-card" href="{{ url_for('group_round', group_id=group.id, post_id=post.id) }}">
+    <span class="round-card-text"><strong>{{ post.author.username }}</strong> played a round at <strong>{{ ri.round.course_name }}</strong>{% if ri.companions %} {{ ri.companions }}{% endif %}</span>
+    <span class="round-card-score">{{ ri.round.total_score }}{% if ri.round.relative_score is not none %} <small>({{ '%+d' % ri.round.relative_score if ri.round.relative_score else 'E' }})</small>{% endif %}</span>
+    <span class="round-card-link">{% if ri.round.holes %}{{ ri.round.holes }} holes · {% endif %}View scores →</span>
+  </a>
   {% else %}
   <p class="post-body">{{ post.body }}</p>
   {% endif %}

@@ -157,6 +157,19 @@
     ctx.lineJoin = 'round';
     ctx.stroke();
 
+    // Secondary color: a thinner line down the middle of the path
+    if (disc.secondary_color) {
+      ctx.beginPath();
+      points.forEach((p, i) => {
+        const c = toCanvas(p);
+        if (i === 0) ctx.moveTo(c.x, c.y);
+        else ctx.lineTo(c.x, c.y);
+      });
+      ctx.strokeStyle = disc.secondary_color;
+      ctx.lineWidth = Math.max(1, style.lineWidth * 0.35);
+      ctx.stroke();
+    }
+
     // Start marker (thrower)
     const start = toCanvas(points[0]);
     ctx.beginPath();
@@ -170,6 +183,11 @@
     ctx.arc(end.x, end.y, style.markerRadius, 0, Math.PI * 2);
     ctx.fillStyle = disc.color || '#3b82f6';
     ctx.fill();
+    if (disc.secondary_color) {
+      ctx.lineWidth = Math.max(1.5, style.markerRadius * 0.45);
+      ctx.strokeStyle = disc.secondary_color;
+      ctx.stroke();
+    }
 
     if (style.showDistanceLabel) {
       ctx.fillStyle = style.labelColor;

@@ -257,9 +257,14 @@ form input[type="color"] {
 .disc-card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-top: 4px solid var(--disc-color, var(--primary));
   border-radius: var(--radius);
   overflow: hidden;
+}
+.disc-card::before {
+  content: "";
+  display: block;
+  height: 5px;
+  background: linear-gradient(90deg, var(--disc-color, var(--primary)) 50%, var(--disc-color-2, var(--disc-color, var(--primary))) 50%);
 }
 .disc-card-body { padding: 12px 14px 16px; }
 .disc-card-info { cursor: pointer; border-radius: 6px; margin: -4px -6px 8px; padding: 4px 6px; }
@@ -885,3 +890,34 @@ th.sortable-col.sort-desc::after { content: '↓'; opacity: 1; }
 .event-manage { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
 .attendee-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
 .checkbox-label + .btn { margin-top: 10px; }
+
+/* ---------- Shared rounds in group feeds ---------- */
+.round-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--primary);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+}
+.round-card:hover { border-color: var(--primary); }
+.round-card-text { overflow-wrap: anywhere; }
+.round-card-score { font-size: 1.4rem; font-weight: 700; text-align: right; }
+.round-card-score small { font-size: 0.8rem; font-weight: 500; color: var(--text-muted); }
+.round-card-link { grid-column: 1 / -1; color: var(--primary-dark); font-size: 0.85rem; }
+.share-groups { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.share-done { opacity: 0.6; }
+
+/* ---------- Round hole counts ---------- */
+.chart-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.chart-select, .holes-select { padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; font-size: 0.85rem; }
+.holes-form { margin: 0; }
+.holes-editor { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin: 12px 0 4px; }
+.holes-editor label { margin: 0; }
+.holes-editor input[type="number"] { width: 110px; }
+.holes-heading { margin: 18px 0 8px; }

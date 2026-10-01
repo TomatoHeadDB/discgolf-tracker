@@ -51,6 +51,7 @@ from models import (
     GroupComment,
     GroupEvent,
     EventRsvp,
+    GroupRoundShare,
 )
 
 load_dotenv()
@@ -201,6 +202,60 @@ def deliver_mail(cfg, messages, logger):
                 pass
     except Exception:
         logger.exception("Could not connect to the mail server")
+
+
+HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
+MAX_ROUND_HOLES = 72
+
+
+def clean_color(raw, default=None):
+    """Accept only #rrggbb. Colors end up inside inline style attributes
+    (visible to other users on public bags), so anything else is dropped."""
+    raw = (raw or "").strip()
+    return raw.lower() if HEX_COLOR.match(raw) else default
+
+
+def multi_hole_courses(keys):
+    """Courses that appear with more than one hole count among (course,
+    holes) keys. Only these need the hole count shown in their label."""
+    seen = {}
+    for course, holes in keys:
+        seen.setdefault(course, set()).add(holes)
+    return {c for c, hs in seen.items() if len(hs) > 1}
+
+
+def round_group_label(course, holes, multi):
+    """'Livingston Park', or 'Livingston Park (9 holes)' when that course
+    has rounds with different hole counts being shown side by side."""
+    if course not in multi:
+        return course
+    return f"{course} ({holes} holes)" if holes else f"{course} (holes not set)"
+
+
+def per_18(relative, holes):
+    """+/- scaled to an 18-hole round so 9- and 18-hole results can be
+    ranked together. Unknown hole count is treated as 18."""
+    if relative is None:
+        return None
+    return relative * 18 / holes if holes else float(relative)
+
+
+def describe_companions(names, include_names, limit=3):
+    """Text after 'played a round at <course>': 'with A, B and C' when the
+    poster shared the other players, or 'with 3 other players' when not.
+    Returns '' for a solo round."""
+    names = [n for n in names if n]
+    if not names:
+        return ""
+    if not include_names:
+        n = len(names)
+        return f"with {n} other player{'' if n == 1 else 's'}"
+    shown, rest = names[:limit], len(names) - limit
+    if rest > 0:
+        return f"with {', '.join(shown)} and {rest} other{'' if rest == 1 else 's'}"
+    if len(shown) == 1:
+        return f"with {shown[0]}"
+    return f"with {', '.join(shown[:-1])} and {shown[-1]}"
 
 
 def create_app():
@@ -568,21 +623,53 @@ def create_app():
         )
         if not course_rounds:
             abort(404)
-        scores = [r.total_score for r in course_rounds]
-        rel_scores = [r.relative_score for r in course_rounds if r.relative_score is not None]
-        summary = {
-            "round_count": len(course_rounds),
-            "avg_score": round(sum(scores) / len(scores), 1),
-            "best_score": min(scores),
-            "avg_relative": round(sum(rel_scores) / len(rel_scores), 1) if rel_scores else None,
-            "best_relative": min(rel_scores) if rel_scores else None,
-        }
+        # 9- and 18-hole rounds are summarised separately: averaging their
+        # totals together would mean nothing.
+        by_holes = {}
+        for r in course_rounds:
+            by_holes.setdefault(r.holes, []).append(r)
+        summaries = []
+        for holes in sorted(by_holes, key=lambda h: -(h or 0)):
+            rs = by_holes[holes]
+            scores = [r.total_score for r in rs]
+            rel = [r.relative_score for r in rs if r.relative_score is not None]
+            summaries.append(
+                {
+                    "holes": holes,
+                    "round_count": len(rs),
+                    "avg_score": round(sum(scores) / len(scores), 1),
+                    "best_score": min(scores),
+                    "avg_relative": round(sum(rel) / len(rel), 1) if rel else None,
+                    "best_relative": min(rel) if rel else None,
+                }
+            )
         return render_template(
             "course_detail.html",
             course_name=course_name,
             rounds=course_rounds,
-            summary=summary,
+            summaries=summaries,
         )
+
+    @app.route("/rounds/<int:round_id>/holes", methods=["POST"])
+    @login_required
+    def set_round_holes(round_id):
+        r = db.session.get(Round, round_id)
+        if r is None or r.user_id != current_user.id:
+            abort(404)
+        back = _safe_next(request.form.get("next")) or url_for("round_detail", round_id=r.id)
+        raw = request.form.get("holes", "").strip().lower()
+        if raw == "custom":  # the Save button next to the number box
+            raw = request.form.get("holes_custom", "").strip()
+        if raw in ("", "auto"):
+            r.num_holes = None  # fall back to the scorecard's hole count
+        elif raw.isdigit() and 1 <= int(raw) <= MAX_ROUND_HOLES:
+            r.num_holes = int(raw)
+        else:
+            flash(f"Holes must be a whole number from 1 to {MAX_ROUND_HOLES}.", "error")
+            return redirect(back)
+        db.session.commit()
+        flash("Hole count updated.", "success")
+        return redirect(back)
 
     @app.route("/rounds/import", methods=["GET", "POST"])
     @login_required
@@ -641,6 +728,12 @@ def create_app():
         r = db.session.get(Round, round_id)
         if r is None or r.user_id != current_user.id:
             abort(404)
+        # Take the round out of any group feeds it was shared to first.
+        for share in GroupRoundShare.query.filter_by(round_id=r.id).all():
+            if share.post is not None:
+                db.session.delete(share.post)  # cascades to the share row
+            else:
+                db.session.delete(share)
         db.session.delete(r)
         db.session.commit()
         flash("Round deleted.", "success")
@@ -701,20 +794,26 @@ def create_app():
         ).all()
         friends = _accepted_connections(current_user.id)
 
-        # Combined leaderboards: for every course the current user has
-        # logged a round at, rank them against any connected friends who
-        # have also logged rounds there.
-        my_courses = {r.course_name for r in Round.query.filter_by(user_id=current_user.id).all()}
-        friend_ids = [f.id for f in friends]
+        # Combined leaderboards: for every course (and hole count) the
+        # current user has logged a round at, rank them against connected
+        # friends who played the same thing. A 9-hole round is only ever
+        # compared with other 9-hole rounds.
+        participants = [current_user] + friends
+        rounds_by_person = {}
+        for rd in Round.query.filter(Round.user_id.in_([p.id for p in participants])).all():
+            rounds_by_person.setdefault(rd.user_id, []).append(rd)
+        my_keys = {(rd.course_name, rd.holes) for rd in rounds_by_person.get(current_user.id, [])}
+        multi = multi_hole_courses(my_keys)
         leaderboards = []
-        for course in sorted(my_courses):
-            participants = [current_user] + friends
+        for course, holes in sorted(my_keys, key=lambda k: (k[0].lower(), -(k[1] or 0))):
             rows = []
             for person in participants:
                 rel_scores = [
-                    r.relative_score
-                    for r in Round.query.filter_by(user_id=person.id, course_name=course).all()
-                    if r.relative_score is not None
+                    rd.relative_score
+                    for rd in rounds_by_person.get(person.id, [])
+                    if rd.course_name == course
+                    and rd.holes == holes
+                    and rd.relative_score is not None
                 ]
                 if not rel_scores:
                     continue
@@ -731,7 +830,14 @@ def create_app():
             rows.sort(key=lambda x: x["avg_relative"])
             for i, row in enumerate(rows, start=1):
                 row["rank"] = i
-            leaderboards.append({"course_name": course, "rows": rows})
+            leaderboards.append(
+                {
+                    "course_name": course,
+                    "holes": holes,
+                    "label": round_group_label(course, holes, multi),
+                    "rows": rows,
+                }
+            )
 
         return render_template(
             "social.html",
@@ -1091,6 +1197,7 @@ def create_app():
             return redirect(url_for("group_members", group_id=group.id))
         was_pending = m.status == "pending"
         _purge_member_rsvps(group, current_user.id)
+        _purge_member_round_shares(group, current_user.id)
         db.session.delete(m)
         db.session.commit()
         flash("Request cancelled." if was_pending else f'You left "{group.name}".', "success")
@@ -1164,6 +1271,7 @@ def create_app():
             ):
                 abort(403)
             _purge_member_rsvps(group, target.user_id)
+            _purge_member_round_shares(group, target.user_id)
             db.session.delete(target)
             flash(f"{name} removed from the group.", "success")
 
@@ -1416,13 +1524,24 @@ def create_app():
         items = []
         for p in posts:
             info = None
+            round_info = None
             if p.kind == "event" and p.event is not None:
                 info = _event_info(p.event, current_user.id, now)
+            elif p.kind == "round" and p.round_share is not None and p.round_share.round is not None:
+                rd = p.round_share.round
+                round_info = {
+                    "round": rd,
+                    "companions": describe_companions(
+                        [ps.player_name for ps in rd.player_scores],
+                        p.round_share.include_players,
+                    ),
+                }
             items.append(
                 {
                     "post": p,
                     "event_info": info,
-                    "can_delete": p.kind == "post"
+                    "round_info": round_info,
+                    "can_delete": p.kind != "event"
                     and (p.author_id == current_user.id or can_moderate),
                     "comments": [
                         {
@@ -1706,6 +1825,122 @@ def create_app():
             flash("Couldn't save that just now, please try again.", "error")
         return redirect(back)
 
+    # ---------- Sharing rounds to group feeds ----------
+
+    def _purge_member_round_shares(group, user_id):
+        """When someone leaves or is removed, their shared rounds leave the
+        group's feed too (the share was made for the group they were in)."""
+        for share in GroupRoundShare.query.filter_by(group_id=group.id).all():
+            if share.post is not None and share.post.author_id == user_id:
+                db.session.delete(share.post)  # cascades to the share row
+
+    @app.route("/rounds/<int:round_id>/share", methods=["GET", "POST"])
+    @login_required
+    @limiter.limit("30 per hour", methods=["POST"])
+    def share_round(round_id):
+        r = db.session.get(Round, round_id)
+        if r is None or r.user_id != current_user.id:
+            abort(404)
+
+        memberships = (
+            GroupMember.query.filter_by(user_id=current_user.id, status="active")
+            .join(Group, GroupMember.group_id == Group.id)
+            .order_by(Group.name)
+            .all()
+        )
+        already = {
+            s.group_id for s in GroupRoundShare.query.filter_by(round_id=r.id).all()
+        }
+        companions = [ps.player_name for ps in r.player_scores]
+
+        if request.method == "POST":
+            allowed = {m.group_id for m in memberships} - already
+            picked = []
+            for raw in request.form.getlist("group_ids"):
+                if raw.isdigit() and int(raw) in allowed and int(raw) not in picked:
+                    picked.append(int(raw))
+            if not picked:
+                flash("Pick at least one group to share to.", "error")
+                return redirect(url_for("share_round", round_id=r.id))
+            include = request.form.get("include_players") == "on"
+            for gid in picked:
+                post = GroupPost(group_id=gid, author_id=current_user.id, kind="round")
+                db.session.add(post)
+                db.session.flush()  # assigns post.id
+                db.session.add(
+                    GroupRoundShare(
+                        post_id=post.id, group_id=gid, round_id=r.id, include_players=include
+                    )
+                )
+            try:
+                db.session.commit()
+            except IntegrityError:
+                db.session.rollback()  # double-submit: already shared to one of them
+                flash("That round was already shared to one of those groups.", "error")
+                return redirect(url_for("share_round", round_id=r.id))
+            names = [m.group.name for m in memberships if m.group_id in picked]
+            flash("Shared to " + ", ".join(names) + ".", "success")
+            if len(picked) == 1:
+                return redirect(url_for("group_view", group_id=picked[0]))
+            return redirect(url_for("rounds"))
+
+        return render_template(
+            "share_round.html",
+            round=r,
+            memberships=memberships,
+            already=already,
+            companions=companions,
+        )
+
+    @app.route("/groups/<int:group_id>/posts/<int:post_id>/round")
+    @login_required
+    def group_round(group_id, post_id):
+        group, me = _require_member(group_id)
+        post = db.session.get(GroupPost, post_id)
+        if (
+            post is None
+            or post.group_id != group.id
+            or post.kind != "round"
+            or post.round_share is None
+            or post.round_share.round is None
+        ):
+            abort(404)
+        share = post.round_share
+        r = share.round
+        players = [
+            {
+                "name": post.author.username,
+                "total": r.total_score,
+                "relative": r.relative_score,
+                "is_poster": True,
+            }
+        ]
+        other_count = len(r.player_scores)
+        if share.include_players:
+            for ps in r.player_scores:
+                players.append(
+                    {
+                        "name": ps.player_name,
+                        "total": ps.total_score,
+                        "relative": ps.relative_score,
+                        "is_poster": False,
+                    }
+                )
+        players.sort(key=lambda p: p["total"])
+        hole_scores = json.loads(r.hole_scores) if r.hole_scores else []
+        return render_template(
+            "group_round.html",
+            group=group,
+            me=me,
+            post=post,
+            round=r,
+            share=share,
+            players=players,
+            other_count=other_count,
+            hole_scores=hole_scores,
+            can_settings=_can(me, "edit_group"),
+        )
+
     # ---------- JSON API (used by the flight-path canvas + multi-disc compare) ----------
 
     @app.route("/api/discs")
@@ -1830,6 +2065,7 @@ def create_app():
                 total_score=total_score,
                 relative_score=relative_score,
                 hole_scores=json.dumps(holes) if holes else None,
+                num_holes=len(holes) if holes else None,
             )
             db.session.add(new_round)
             db.session.flush()  # assign new_round.id for the FK below
@@ -1863,52 +2099,70 @@ def create_app():
                 "avg_by_course": [],
                 "leaderboard": [],
                 "total_rounds": 0,
-                "best_relative": None,
+                "best_by_holes": [],
             }
 
-        by_course = {}
+        # Group by (course, hole count) so 9- and 18-hole rounds at the
+        # same course never get averaged together.
+        by_group = {}
         for r in user_rounds:
-            by_course.setdefault(r.course_name, []).append(r)
+            by_group.setdefault((r.course_name, r.holes), []).append(r)
+        multi = multi_hole_courses(by_group.keys())
+        order = lambda k: (k[0].lower(), -(k[1] or 0))
 
-        avg_by_course = sorted(
-            (
-                {
-                    "course_name": course,
-                    "round_count": len(rs),
-                    "avg_score": round(sum(x.total_score for x in rs) / len(rs), 1),
-                }
-                for course, rs in by_course.items()
-            ),
-            key=lambda x: x["course_name"],
-        )
+        avg_by_course = [
+            {
+                "course_name": course,
+                "holes": holes,
+                "label": round_group_label(course, holes, multi),
+                "round_count": len(rs),
+                "avg_score": round(sum(x.total_score for x in rs) / len(rs), 1),
+            }
+            for (course, holes), rs in sorted(by_group.items(), key=lambda kv: order(kv[0]))
+        ]
 
-        # Leaderboard: courses ranked by average relative score (+/-), best
-        # (most under par) first. Only courses with at least one round that
-        # has a relative score are eligible.
+        # Leaderboard: ranked by average +/- scaled to 18 holes, so a 9-hole
+        # course and an 18-hole course can be compared fairly. The raw
+        # average is shown alongside.
         leaderboard_rows = []
-        for course, rs in by_course.items():
+        for (course, holes), rs in by_group.items():
             rel_scores = [x.relative_score for x in rs if x.relative_score is not None]
             if not rel_scores:
                 continue
+            avg_rel = sum(rel_scores) / len(rel_scores)
             leaderboard_rows.append(
                 {
                     "course_name": course,
+                    "holes": holes,
+                    "label": round_group_label(course, holes, multi),
                     "round_count": len(rel_scores),
-                    "avg_relative": round(sum(rel_scores) / len(rel_scores), 1),
+                    "avg_relative": round(avg_rel, 1),
+                    "avg_per_18": round(per_18(avg_rel, holes), 1),
+                    "_sort": per_18(avg_rel, holes),
                 }
             )
-        leaderboard_rows.sort(key=lambda x: x["avg_relative"])
+        leaderboard_rows.sort(key=lambda x: (x["_sort"], x["label"].lower()))
         for i, row in enumerate(leaderboard_rows, start=1):
             row["rank"] = i
+            del row["_sort"]
 
-        relative_scores = [r.relative_score for r in user_rounds if r.relative_score is not None]
-        best_relative = min(relative_scores) if relative_scores else None
+        # Best round, per hole count (a -3 over 9 holes isn't a -3 over 18)
+        best = {}
+        for r in user_rounds:
+            if r.relative_score is None:
+                continue
+            if r.holes not in best or r.relative_score < best[r.holes]:
+                best[r.holes] = r.relative_score
+        best_by_holes = [
+            {"holes": h, "best_relative": best[h]}
+            for h in sorted(best, key=lambda h: -(h or 0))
+        ]
 
         return {
             "avg_by_course": avg_by_course,
             "leaderboard": leaderboard_rows,
             "total_rounds": len(user_rounds),
-            "best_relative": best_relative,
+            "best_by_holes": best_by_holes,
         }
 
     def _allowed_photo(filename):
@@ -1982,7 +2236,14 @@ def create_app():
         disc.turn = f("turn", 0.0)
         disc.fade = f("fade", 2.0)
         disc.plastic = request.form.get("plastic", "").strip() or None
-        disc.color = request.form.get("color") or "#3b82f6"
+        disc.color = clean_color(request.form.get("color"), "#3b82f6")
+        # The color picker always has a value, so a checkbox says whether a
+        # second color is wanted at all.
+        disc.secondary_color = (
+            clean_color(request.form.get("secondary_color"))
+            if request.form.get("has_secondary") == "on"
+            else None
+        )
         weight = request.form.get("weight_grams", "").strip()
         disc.weight_grams = int(weight) if weight.isdigit() else None
         disc.condition = request.form.get("condition") or None

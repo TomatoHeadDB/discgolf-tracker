@@ -17,17 +17,20 @@
       <span class="stat-value">{{ stats.total_rounds }}</span>
       <span class="stat-label">Rounds logged</span>
     </div>
-    {% if stats.best_relative is not none %}
+    {% for b in stats.best_by_holes %}
     <div class="stat-card">
-      <span class="stat-value">{{ stats.best_relative }}</span>
-      <span class="stat-label">Best round (+/-)</span>
+      <span class="stat-value">{{ b.best_relative }}</span>
+      <span class="stat-label">Best round (+/-){% if stats.best_by_holes|length > 1 %} · {{ b.holes ~ ' holes' if b.holes else 'holes not set' }}{% endif %}</span>
     </div>
-    {% endif %}
+    {% endfor %}
   </div>
 
   <div class="charts-layout">
     <div class="chart-card">
-      <h3>Score Over Time</h3>
+      <div class="chart-title-row">
+        <h3 id="trend-title">Score Over Time</h3>
+        <select id="trend-holes" class="chart-select" aria-label="Hole count" style="display:none"></select>
+      </div>
       <canvas id="trend-chart" width="640" height="220"></canvas>
     </div>
     <div class="chart-card">
@@ -50,7 +53,7 @@
       <tbody>
         {% for row in stats.avg_by_course %}
         <tr>
-          <td><a href="{{ url_for('course_detail', course_name=row.course_name) }}">{{ row.course_name }}</a></td>
+          <td><a href="{{ url_for('course_detail', course_name=row.course_name) }}">{{ row.label }}</a></td>
           <td data-value="{{ row.round_count }}">{{ row.round_count }}</td>
           <td data-value="{{ row.avg_score }}">{{ row.avg_score }}</td>
         </tr>
@@ -63,6 +66,7 @@
   {% if stats.leaderboard %}
   <section class="leaderboard-section">
     <h2>Best Courses (Avg +/-)</h2>
+    <p class="hint" style="margin-top:0">Ranked by average +/- scaled to 18 holes, so 9- and 18-hole courses compare fairly.</p>
     <table class="rounds-table sortable" id="leaderboard-table">
       <thead>
         <tr>
@@ -70,15 +74,17 @@
           <th data-sort-key="course">Course</th>
           <th data-sort-key="rounds">Rounds</th>
           <th data-sort-key="avg">Avg +/-</th>
+          <th data-sort-key="per18">Per 18</th>
         </tr>
       </thead>
       <tbody>
         {% for row in stats.leaderboard %}
         <tr class="{{ 'leaderboard-top' if row.rank == 1 else '' }}">
           <td data-value="{{ row.rank }}">{{ row.rank }}</td>
-          <td><a href="{{ url_for('course_detail', course_name=row.course_name) }}">{{ row.course_name }}</a></td>
+          <td><a href="{{ url_for('course_detail', course_name=row.course_name) }}">{{ row.label }}</a></td>
           <td data-value="{{ row.round_count }}">{{ row.round_count }}</td>
           <td data-value="{{ row.avg_relative }}">{{ row.avg_relative }}</td>
+          <td data-value="{{ row.avg_per_18 }}">{{ row.avg_per_18 }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -94,6 +100,7 @@
           <th data-sort-key="date">Date</th>
           <th data-sort-key="course">Course</th>
           <th data-sort-key="layout">Layout</th>
+          <th data-sort-key="holes">Holes</th>
           <th data-sort-key="score">Score</th>
           <th data-sort-key="relative">+/-</th>
           <th></th>
@@ -105,10 +112,22 @@
           <td data-value="{{ r.played_at.isoformat() }}">{{ r.played_at.strftime('%b %-d, %Y') }}</td>
           <td><a href="{{ url_for('course_detail', course_name=r.course_name) }}">{{ r.course_name }}</a></td>
           <td>{{ r.layout_name or "—" }}</td>
+          <td data-value="{{ r.holes or 0 }}">
+            <form method="POST" action="{{ url_for('set_round_holes', round_id=r.id) }}" class="inline-form holes-form">
+              <input type="hidden" name="next" value="{{ request.path }}">
+              <select name="holes" class="holes-select" aria-label="Holes played" onchange="this.form.submit()">
+                <option value="" {% if not r.holes %}selected{% endif %}>—</option>
+                {% for n in [9, 18, 27, 36] %}<option value="{{ n }}" {% if r.holes == n %}selected{% endif %}>{{ n }}</option>{% endfor %}
+                {% if r.holes and r.holes not in [9, 18, 27, 36] %}<option value="{{ r.holes }}" selected>{{ r.holes }}</option>{% endif %}
+              </select>
+              <noscript><button type="submit" class="btn btn-small">Save</button></noscript>
+            </form>
+          </td>
           <td data-value="{{ r.total_score }}">{{ r.total_score }}</td>
           <td data-value="{{ r.relative_score if r.relative_score is not none else 0 }}">{{ r.relative_score if r.relative_score is not none else "—" }}</td>
           <td>
             <a href="{{ url_for('round_detail', round_id=r.id) }}" class="btn btn-small">View</a>
+            <a href="{{ url_for('share_round', round_id=r.id) }}" class="btn btn-small">Share</a>
             <form method="POST" action="{{ url_for('delete_round', round_id=r.id) }}"
                   onsubmit="return confirm('Delete this round?');" class="inline-form">
               <button type="submit" class="btn btn-small btn-danger">Delete</button>
@@ -124,7 +143,39 @@
   <script src="{{ url_for('static', filename='js/sortable.js') }}"></script>
   <script>
     const roundsData = {{ rounds_json | safe }};
-    RoundCharts.drawScoreTrend(document.getElementById('trend-chart'), roundsData);
+
+    // The trend chart plots one hole count at a time (a 9-hole total and an
+    // 18-hole total aren't comparable). Defaults to the most-played one.
+    (function () {
+      const canvas = document.getElementById('trend-chart');
+      const select = document.getElementById('trend-holes');
+      const title = document.getElementById('trend-title');
+      const counts = {};
+      roundsData.forEach(function (r) {
+        const k = r.holes == null ? 'unknown' : String(r.holes);
+        counts[k] = (counts[k] || 0) + 1;
+      });
+      const keys = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; });
+      function labelFor(k) { return k === 'unknown' ? 'Holes not set' : k + ' holes'; }
+      function render(k) {
+        const subset = roundsData.filter(function (r) {
+          return (r.holes == null ? 'unknown' : String(r.holes)) === k;
+        });
+        title.textContent = keys.length > 1 ? 'Score Over Time (' + labelFor(k) + ')' : 'Score Over Time';
+        RoundCharts.drawScoreTrend(canvas, subset);
+      }
+      if (keys.length > 1) {
+        keys.forEach(function (k) {
+          const o = document.createElement('option');
+          o.value = k;
+          o.textContent = labelFor(k) + ' (' + counts[k] + ')';
+          select.appendChild(o);
+        });
+        select.style.display = '';
+        select.addEventListener('change', function () { render(select.value); });
+      }
+      render(keys[0]);
+    })();
     RoundCharts.drawAvgByCourse(document.getElementById('course-chart'), {{ stats.avg_by_course | tojson }});
 
     document.querySelectorAll('table.sortable').forEach(function (t) {

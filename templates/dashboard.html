@@ -14,7 +14,7 @@
       <div class="disc-grid">
         {% for disc in cat_discs %}
         <div class="disc-card"
-             style="--disc-color: {{ disc.color }}"
+             style="--disc-color: {{ disc.color }}; --disc-color-2: {{ disc.secondary_color or disc.color }}"
              data-name="{{ disc.name|lower }}"
              data-manufacturer="{{ (disc.manufacturer or '')|lower }}"
              data-plastic="{{ (disc.plastic or '')|lower }}"
@@ -28,7 +28,7 @@
                 {% if disc.photo_filename %}
                 <img class="disc-photo-thumb" src="{{ url_for('disc_photo', disc_id=disc.id) }}" alt="{{ disc.name }}">
                 {% else %}
-                <div class="disc-photo-placeholder" style="background: {{ disc.color }}">🥏</div>
+                <div class="disc-photo-placeholder" style="background: {% if disc.secondary_color %}linear-gradient(135deg, {{ disc.color }} 50%, {{ disc.secondary_color }} 50%){% else %}{{ disc.color }}{% endif %}">🥏</div>
                 {% endif %}
               </div>
               <div class="flip-face flip-back">
@@ -38,6 +38,7 @@
                         data-turn="{{ disc.turn }}"
                         data-fade="{{ disc.fade }}"
                         data-color="{{ disc.color }}"
+                        data-secondary="{{ disc.secondary_color or '' }}"
                         data-weight="{{ disc.weight_grams or '' }}"
                         width="160" height="200"></canvas>
               </div>
@@ -131,6 +132,7 @@
       turn: parseFloat(canvas.dataset.turn),
       fade: parseFloat(canvas.dataset.fade),
       color: canvas.dataset.color,
+      secondary_color: canvas.dataset.secondary || null,
       weight_grams: canvas.dataset.weight ? parseFloat(canvas.dataset.weight) : null
     });
   });

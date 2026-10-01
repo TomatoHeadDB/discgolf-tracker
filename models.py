@@ -60,6 +60,8 @@ class Disc(db.Model):
 
     plastic = db.Column(db.String(80), nullable=True)
     color = db.Column(db.String(20), nullable=False, default="#3b82f6")
+    # Optional second color (stripe/rim/swirl); None = single-color disc
+    secondary_color = db.Column(db.String(20), nullable=True)
     weight_grams = db.Column(db.Integer, nullable=True)
     condition = db.Column(db.String(30), nullable=True)
     in_bag = db.Column(db.Boolean, default=True)
@@ -84,6 +86,7 @@ class Disc(db.Model):
             "fade": self.fade,
             "plastic": self.plastic,
             "color": self.color,
+            "secondary_color": self.secondary_color,
             "weight_grams": self.weight_grams,
             "condition": self.condition,
             "in_bag": self.in_bag,
@@ -103,6 +106,9 @@ class Round(db.Model):
     total_score = db.Column(db.Integer, nullable=False)
     relative_score = db.Column(db.Integer, nullable=True)  # e.g. -3, +2
     hole_scores = db.Column(db.Text, nullable=True)  # JSON-encoded list of ints
+    # How many holes this round covered (9, 18, 27...). NULL = not set; see
+    # the `holes` property, which falls back to the number of hole scores.
+    num_holes = db.Column(db.Integer, nullable=True)
 
     imported_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -110,9 +116,24 @@ class Round(db.Model):
         "RoundPlayerScore", backref="round", lazy=True, cascade="all, delete-orphan"
     )
 
+    @property
+    def holes(self):
+        """Effective hole count: the value set on the round, else the number
+        of hole scores that came with the scorecard, else None (unknown)."""
+        if self.num_holes:
+            return self.num_holes
+        if self.hole_scores:
+            try:
+                n = len(json.loads(self.hole_scores))
+            except (TypeError, ValueError):
+                return None
+            return n or None
+        return None
+
     def to_dict(self):
         return {
             "id": self.id,
+            "holes": self.holes,
             "course_name": self.course_name,
             "layout_name": self.layout_name,
             "played_at": self.played_at.isoformat() if self.played_at else None,
@@ -300,12 +321,16 @@ class GroupPost(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     group_id = db.Column(db.Integer, db.ForeignKey("disc_groups.id"), nullable=False, index=True)
     author_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
-    kind = db.Column(db.String(20), nullable=False, default="post")  # post | event
+    kind = db.Column(db.String(20), nullable=False, default="post")  # post | event | round
     body = db.Column(db.Text, nullable=True)
     event_id = db.Column(db.Integer, db.ForeignKey("group_events.id"), nullable=True, index=True)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
     author = db.relationship("User", foreign_keys=[author_id])
+    # Present only for kind == "round"; removed together with the post.
+    round_share = db.relationship(
+        "GroupRoundShare", backref="post", uselist=False, cascade="all, delete-orphan"
+    )
     comments = db.relationship(
         "GroupComment",
         backref="post",
@@ -325,3 +350,23 @@ class GroupComment(db.Model):
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     author = db.relationship("User", foreign_keys=[author_id])
+
+
+class GroupRoundShare(db.Model):
+    """Links a feed post (kind 'round') to the round it shares. A round is
+    shared to a group at most once. include_players controls whether the
+    other players' names and scores from the scorecard are visible to the
+    group (otherwise only how many other players there were)."""
+
+    __tablename__ = "group_round_shares"
+    __table_args__ = (db.UniqueConstraint("round_id", "group_id", name="uq_round_group_share"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    post_id = db.Column(
+        db.Integer, db.ForeignKey("group_posts.id"), nullable=False, unique=True, index=True
+    )
+    group_id = db.Column(db.Integer, db.ForeignKey("disc_groups.id"), nullable=False, index=True)
+    round_id = db.Column(db.Integer, db.ForeignKey("rounds.id"), nullable=False, index=True)
+    include_players = db.Column(db.Boolean, nullable=False, default=False)
+
+    round = db.relationship("Round", foreign_keys=[round_id])

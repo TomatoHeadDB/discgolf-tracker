@@ -3,12 +3,27 @@
 {% block content %}
 <div class="page-header">
   <h1>{{ round.course_name }}</h1>
-  <a href="{{ url_for('rounds') }}" class="btn btn-ghost">← Back to Rounds</a>
+  <div>
+    <a href="{{ url_for('share_round', round_id=round.id) }}" class="btn btn-primary">Share to a group</a>
+    <a href="{{ url_for('rounds') }}" class="btn btn-ghost">← Back to Rounds</a>
+  </div>
 </div>
 
 <p class="round-meta">
-  {{ round.layout_name or "—" }} · {{ round.played_at.strftime('%B %-d, %Y') }}
+  {{ round.layout_name or "—" }} · {{ round.holes ~ ' holes' if round.holes else 'holes not set' }} · {{ round.played_at.strftime('%B %-d, %Y') }}
 </p>
+
+<form method="POST" action="{{ url_for('set_round_holes', round_id=round.id) }}" class="holes-editor">
+  <label>Holes played
+    <input type="number" name="holes_custom" min="1" max="72" value="{{ round.holes or '' }}" placeholder="e.g. 18">
+  </label>
+  <button type="submit" name="holes" value="custom" class="btn btn-small btn-primary">Save</button>
+  {% for n in [9, 18] %}
+  <button type="submit" name="holes" value="{{ n }}" class="btn btn-small {{ 'btn-primary' if round.holes == n else 'btn-ghost' }}" formnovalidate>{{ n }}</button>
+  {% endfor %}
+  <button type="submit" name="holes" value="auto" class="btn btn-small btn-ghost" formnovalidate title="Use the hole count from the scorecard">Auto</button>
+</form>
+<p class="hint">Rounds are compared by hole count in your stats, so a 9-hole round never gets averaged with an 18-hole one. Use a custom number for 27, 36 and so on.</p>
 
 <table class="rounds-table">
   <thead>
