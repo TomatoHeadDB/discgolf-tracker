@@ -6,7 +6,11 @@ import re
 import json
 import hmac
 import secrets
-from datetime import datetime
+import smtplib
+import threading
+from datetime import datetime, timezone
+from email.message import EmailMessage
+from zoneinfo import ZoneInfo
 from flask import (
     Flask,
     render_template,
@@ -43,6 +47,10 @@ from models import (
     Connection,
     Group,
     GroupMember,
+    GroupPost,
+    GroupComment,
+    GroupEvent,
+    EventRsvp,
 )
 
 load_dotenv()
@@ -80,6 +88,119 @@ def normalize_county(raw):
     'hillsborough' match each other. Returns None if empty."""
     raw = re.sub(r"\s+county$", "", (raw or "").strip(), flags=re.I).strip()
     return raw[:120] or None
+
+
+# ---------- Group events: time formatting + email (module-level so they can
+# be unit-tested without a running app) ----------
+
+FEED_PAGE = 15
+
+
+def load_app_timezone():
+    """Event times are wall-clock times in this zone (APP_TIMEZONE)."""
+    name = os.environ.get("APP_TIMEZONE", "America/New_York").strip()
+    try:
+        return ZoneInfo(name)
+    except Exception:
+        return timezone.utc
+
+
+def _fmt_clock(dt):
+    return f"{dt.hour % 12 or 12}:{dt.minute:02d} {'AM' if dt.hour < 12 else 'PM'}"
+
+
+def format_event_when(dt):
+    """e.g. 'Sat, Oct 4 at 6:00 PM' (adds the year if it isn't this year)."""
+    if dt is None:
+        return ""
+    year = f", {dt.year}" if dt.year != datetime.now().year else ""
+    return f"{dt.strftime('%a, %b')} {dt.day}{year} at {_fmt_clock(dt)}"
+
+
+def clean_header(value):
+    """Collapse whitespace/newlines so user text can't inject email headers."""
+    return " ".join(str(value).split())[:200]
+
+
+def mail_settings():
+    def as_int(name, default):
+        try:
+            return int(os.environ.get(name) or default)
+        except (TypeError, ValueError):
+            return default
+
+    return {
+        "host": os.environ.get("MAIL_SERVER", "").strip(),
+        "port": as_int("MAIL_PORT", 587),
+        "username": os.environ.get("MAIL_USERNAME", "").strip(),
+        "password": os.environ.get("MAIL_PASSWORD", ""),
+        "use_tls": os.environ.get("MAIL_USE_TLS", "true").lower() == "true",
+        "use_ssl": os.environ.get("MAIL_USE_SSL", "false").lower() == "true",
+        "sender": os.environ.get("MAIL_FROM", "").strip(),
+    }
+
+
+def mail_configured(cfg):
+    return bool(cfg["host"] and cfg["sender"])
+
+
+def build_event_email(cfg, to_addr, group_name, event, creator_name, event_url, about_url):
+    msg = EmailMessage()
+    msg["Subject"] = clean_header(f"New event in {group_name}: {event.title}")
+    msg["From"] = cfg["sender"]
+    msg["To"] = to_addr
+    lines = [
+        f"{creator_name} suggested a new event in {group_name}:",
+        "",
+        event.title,
+        f"When: {format_event_when(event.starts_at)}",
+    ]
+    if event.location:
+        lines.append(f"Where: {event.location}")
+    if event.capacity:
+        lines.append(f"Spots: {event.capacity}")
+    if event.description:
+        lines += ["", event.description[:300] + ("..." if len(event.description) > 300 else "")]
+    lines += [
+        "",
+        f"See the details and sign up: {event_url}",
+        "",
+        "--",
+        f"You're getting this because you turned on event emails for {group_name}.",
+        f"Turn them off any time: {about_url}",
+    ]
+    msg.set_content("\n".join(lines))
+    return msg
+
+
+def deliver_mail(cfg, messages, logger):
+    """Send all messages over one SMTP connection. Never raises: a mail
+    problem must not affect the request that triggered it."""
+    try:
+        if cfg["use_ssl"]:
+            server = smtplib.SMTP_SSL(cfg["host"], cfg["port"], timeout=20)
+        else:
+            server = smtplib.SMTP(cfg["host"], cfg["port"], timeout=20)
+            if cfg["use_tls"]:
+                server.starttls()
+        try:
+            if cfg["username"]:
+                server.login(cfg["username"], cfg["password"])
+            sent = 0
+            for msg in messages:
+                try:
+                    server.send_message(msg)
+                    sent += 1
+                except Exception:
+                    logger.exception("Event email to %s failed", msg["To"])
+            logger.info("Event notifications sent: %d of %d", sent, len(messages))
+        finally:
+            try:
+                server.quit()
+            except Exception:
+                pass
+    except Exception:
+        logger.exception("Could not connect to the mail server")
 
 
 def create_app():
@@ -879,13 +1000,7 @@ def create_app():
         group = _get_group_or_404(group_id)
         me = _membership(group.id, current_user.id, active_only=False)
         if me is not None and me.status == "active":
-            return render_template(
-                "group_view.html",
-                group=group,
-                me=me,
-                can_settings=_can(me, "edit_group"),
-                can_invite=_can(me, "manage_members"),
-            )
+            return _render_feed(group, me)
         # Not (yet) a member: show the join page, but only for groups that
         # advertise themselves or that this user has already requested.
         if not group.advertise_region and me is None:
@@ -942,7 +1057,13 @@ def create_app():
             return redirect(url_for("group_view", group_id=group.id))
         status = "active" if group.join_mode == "open" else "pending"
         db.session.add(
-            GroupMember(group_id=group.id, user_id=current_user.id, role="member", status=status)
+            GroupMember(
+                group_id=group.id,
+                user_id=current_user.id,
+                role="member",
+                status=status,
+                email_notify=request.form.get("email_notify") == "on",
+            )
         )
         try:
             db.session.commit()
@@ -969,6 +1090,7 @@ def create_app():
             )
             return redirect(url_for("group_members", group_id=group.id))
         was_pending = m.status == "pending"
+        _purge_member_rsvps(group, current_user.id)
         db.session.delete(m)
         db.session.commit()
         flash("Request cancelled." if was_pending else f'You left "{group.name}".', "success")
@@ -982,7 +1104,7 @@ def create_app():
         me.email_notify = request.form.get("email_notify") == "on"
         db.session.commit()
         flash("Group preferences saved.", "success")
-        return redirect(url_for("group_view", group_id=group.id))
+        return redirect(url_for("group_about", group_id=group.id))
 
     @app.route("/groups/<int:group_id>/members")
     @login_required
@@ -1041,6 +1163,7 @@ def create_app():
                 or (target.role == "admin" and not is_owner)  # only the owner removes admins
             ):
                 abort(403)
+            _purge_member_rsvps(group, target.user_id)
             db.session.delete(target)
             flash(f"{name} removed from the group.", "success")
 
@@ -1139,6 +1262,449 @@ def create_app():
         db.session.commit()
         flash(f'Deleted "{name}".', "success")
         return redirect(url_for("groups_home"))
+
+    # ---------- Group feed, comments, events, RSVPs ----------
+
+    app_tz = load_app_timezone()
+    mail_cfg = mail_settings()
+
+    def _now_local():
+        """'Now' as a naive wall-clock time in APP_TIMEZONE (event times are
+        stored the same way, so the two compare directly)."""
+        return datetime.now(app_tz).replace(tzinfo=None)
+
+    def _local_dt(value):
+        """Format a stored UTC timestamp (post/comment time) in APP_TIMEZONE."""
+        if value is None:
+            return ""
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        local = value.astimezone(app_tz)
+        return f"{local.strftime('%b')} {local.day}, {_fmt_clock(local)}"
+
+    app.jinja_env.filters["event_when"] = format_event_when
+    app.jinja_env.filters["local_dt"] = _local_dt
+
+    def _safe_next(target):
+        """Only follow redirects to paths on this site."""
+        if target and target.startswith("/") and not target.startswith("//") and "\\" not in target:
+            return target
+        return None
+
+    def _can_create_events(group, member):
+        if member is None or member.status != "active":
+            return False
+        if member.role == "owner" or group.event_policy == "members":
+            return True
+        return bool(member.can_create_events)
+
+    def _can_manage_event(member, event):
+        """The organizer, or an owner/admin allowed to moderate."""
+        return member.user_id == event.creator_id or _can(member, "moderate_posts")
+
+    def _get_event_or_404(group, event_id):
+        event = db.session.get(GroupEvent, event_id)
+        if event is None or event.group_id != group.id:
+            abort(404)
+        return event
+
+    def _event_info(event, user_id, now):
+        going = maybe = 0
+        mine = None
+        for r in event.rsvps:
+            if r.status == "going":
+                going += 1
+            elif r.status == "maybe":
+                maybe += 1
+            if r.user_id == user_id:
+                mine = r.status
+        past = event.starts_at < now
+        return {
+            "event": event,
+            "going": going,
+            "maybe": maybe,
+            "my_status": mine,
+            "past": past,
+            "open": (not event.cancelled) and (not past),
+            "full": bool(event.capacity) and going >= event.capacity,
+        }
+
+    def _purge_member_rsvps(group, user_id):
+        """A member who leaves (or is removed) shouldn't stay 'going'."""
+        ids = [e.id for e in GroupEvent.query.filter_by(group_id=group.id).all()]
+        if not ids:
+            return
+        for r in EventRsvp.query.filter(
+            EventRsvp.user_id == user_id, EventRsvp.event_id.in_(ids)
+        ).all():
+            db.session.delete(r)
+
+    def _event_fields_from_form():
+        """Validate the event form. Returns (fields, None) or (None, message)."""
+        title = request.form.get("title", "").strip()
+        if not (3 <= len(title) <= 100):
+            return None, "Event title must be 3-100 characters."
+        raw_start = request.form.get("starts_at", "").strip()
+        try:
+            starts_at = datetime.strptime(raw_start, "%Y-%m-%dT%H:%M")
+        except ValueError:
+            return None, "Pick a valid date and time."
+        capacity = None
+        raw_cap = request.form.get("capacity", "").strip()
+        if raw_cap:
+            if not raw_cap.isdigit() or not (1 <= int(raw_cap) <= 500):
+                return None, "Spots must be a whole number from 1 to 500 (or leave it empty for no limit)."
+            capacity = int(raw_cap)
+        return (
+            {
+                "title": title,
+                "description": request.form.get("description", "").strip()[:2000] or None,
+                "location": request.form.get("location", "").strip()[:200] or None,
+                "starts_at": starts_at,
+                "capacity": capacity,
+            },
+            None,
+        )
+
+    def _notify_new_event(group, event, creator):
+        """Email members who opted in. Returns how many emails were queued.
+        Sending happens on a background thread so the request isn't held up
+        by the mail server."""
+        rows = (
+            GroupMember.query.filter_by(group_id=group.id, status="active", email_notify=True)
+            .filter(GroupMember.user_id != creator.id)
+            .all()
+        )
+        addresses = [m.user.email for m in rows if m.user and m.user.email]
+        if not addresses:
+            return 0
+        if not mail_configured(mail_cfg):
+            app.logger.info(
+                "Event %s created but MAIL_SERVER/MAIL_FROM aren't set; "
+                "skipping %d notification(s).", event.id, len(addresses)
+            )
+            return 0
+        event_url = url_for("group_event", group_id=group.id, event_id=event.id, _external=True)
+        about_url = url_for("group_about", group_id=group.id, _external=True)
+        messages = []
+        for addr in addresses:
+            try:
+                messages.append(
+                    build_event_email(
+                        mail_cfg, addr, group.name, event, creator.username, event_url, about_url
+                    )
+                )
+            except Exception:
+                app.logger.warning("Skipping unusable email address for a notification")
+        if messages:
+            threading.Thread(
+                target=deliver_mail, args=(mail_cfg, messages, app.logger), daemon=True
+            ).start()
+        return len(messages)
+
+    def _render_feed(group, me):
+        before = request.args.get("before", type=int)
+        query = GroupPost.query.filter_by(group_id=group.id)
+        if before:
+            query = query.filter(GroupPost.id < before)
+        posts = query.order_by(GroupPost.id.desc()).limit(FEED_PAGE + 1).all()
+        has_more = len(posts) > FEED_PAGE
+        posts = posts[:FEED_PAGE]
+
+        can_moderate = _can(me, "moderate_posts")
+        now = _now_local()
+        items = []
+        for p in posts:
+            info = None
+            if p.kind == "event" and p.event is not None:
+                info = _event_info(p.event, current_user.id, now)
+            items.append(
+                {
+                    "post": p,
+                    "event_info": info,
+                    "can_delete": p.kind == "post"
+                    and (p.author_id == current_user.id or can_moderate),
+                    "comments": [
+                        {
+                            "comment": c,
+                            "can_delete": c.author_id == current_user.id or can_moderate,
+                        }
+                        for c in p.comments
+                    ],
+                }
+            )
+        return render_template(
+            "group_view.html",
+            group=group,
+            me=me,
+            items=items,
+            has_more=has_more,
+            next_before=posts[-1].id if posts else None,
+            can_settings=_can(me, "edit_group"),
+            can_create_events=_can_create_events(group, me),
+        )
+
+    @app.route("/groups/<int:group_id>/about")
+    @login_required
+    def group_about(group_id):
+        group, me = _require_member(group_id)
+        return render_template(
+            "group_about.html",
+            group=group,
+            me=me,
+            can_settings=_can(me, "edit_group"),
+            can_invite=_can(me, "manage_members"),
+        )
+
+    # ----- feed posts and comments -----
+
+    @app.route("/groups/<int:group_id>/posts", methods=["POST"])
+    @login_required
+    @limiter.limit("40 per hour")
+    def group_post_create(group_id):
+        group, me = _require_member(group_id)
+        body = request.form.get("body", "").strip()
+        if not body:
+            flash("Write something before posting.", "error")
+        elif len(body) > 2000:
+            flash("Posts can be up to 2000 characters.", "error")
+        else:
+            db.session.add(
+                GroupPost(group_id=group.id, author_id=current_user.id, kind="post", body=body)
+            )
+            db.session.commit()
+        return redirect(url_for("group_view", group_id=group.id))
+
+    @app.route("/groups/<int:group_id>/posts/<int:post_id>/delete", methods=["POST"])
+    @login_required
+    def group_post_delete(group_id, post_id):
+        group, me = _require_member(group_id)
+        post = db.session.get(GroupPost, post_id)
+        if post is None or post.group_id != group.id:
+            abort(404)
+        if post.kind == "event":
+            flash("Delete the event itself to remove its post.", "error")
+            return redirect(url_for("group_view", group_id=group.id))
+        if post.author_id != current_user.id and not _can(me, "moderate_posts"):
+            abort(403)
+        db.session.delete(post)
+        db.session.commit()
+        flash("Post deleted.", "success")
+        return redirect(url_for("group_view", group_id=group.id))
+
+    @app.route("/groups/<int:group_id>/posts/<int:post_id>/comments", methods=["POST"])
+    @login_required
+    @limiter.limit("60 per hour")
+    def group_comment_create(group_id, post_id):
+        group, me = _require_member(group_id)
+        post = db.session.get(GroupPost, post_id)
+        if post is None or post.group_id != group.id:
+            abort(404)
+        body = request.form.get("body", "").strip()
+        if not body:
+            flash("Write a comment first.", "error")
+        elif len(body) > 1000:
+            flash("Comments can be up to 1000 characters.", "error")
+        else:
+            db.session.add(GroupComment(post_id=post.id, author_id=current_user.id, body=body))
+            db.session.commit()
+        return redirect(_safe_next(request.form.get("next")) or url_for("group_view", group_id=group.id))
+
+    @app.route("/groups/<int:group_id>/comments/<int:comment_id>/delete", methods=["POST"])
+    @login_required
+    def group_comment_delete(group_id, comment_id):
+        group, me = _require_member(group_id)
+        comment = db.session.get(GroupComment, comment_id)
+        if comment is None or comment.post.group_id != group.id:
+            abort(404)
+        if comment.author_id != current_user.id and not _can(me, "moderate_posts"):
+            abort(403)
+        db.session.delete(comment)
+        db.session.commit()
+        return redirect(_safe_next(request.form.get("next")) or url_for("group_view", group_id=group.id))
+
+    # ----- events -----
+
+    @app.route("/groups/<int:group_id>/events")
+    @login_required
+    def group_events(group_id):
+        group, me = _require_member(group_id)
+        now = _now_local()
+        upcoming = (
+            GroupEvent.query.filter(GroupEvent.group_id == group.id, GroupEvent.starts_at >= now)
+            .order_by(GroupEvent.starts_at)
+            .all()
+        )
+        past = (
+            GroupEvent.query.filter(GroupEvent.group_id == group.id, GroupEvent.starts_at < now)
+            .order_by(GroupEvent.starts_at.desc())
+            .limit(20)
+            .all()
+        )
+        return render_template(
+            "group_events.html",
+            group=group,
+            me=me,
+            upcoming=[_event_info(e, current_user.id, now) for e in upcoming],
+            past=[_event_info(e, current_user.id, now) for e in past],
+            can_settings=_can(me, "edit_group"),
+            can_create_events=_can_create_events(group, me),
+        )
+
+    @app.route("/groups/<int:group_id>/events/new", methods=["GET", "POST"])
+    @login_required
+    @limiter.limit("20 per hour", methods=["POST"])
+    def group_event_new(group_id):
+        group, me = _require_member(group_id)
+        if not _can_create_events(group, me):
+            abort(403)
+        if request.method == "POST":
+            fields, error = _event_fields_from_form()
+            if error is None and fields["starts_at"] <= _now_local():
+                error = "Pick a date and time in the future."
+            if error:
+                flash(error, "error")
+                return render_template(
+                    "group_event_form.html",
+                    group=group, me=me, event=None, form=request.form,
+                    can_settings=_can(me, "edit_group"),
+                )
+            event = GroupEvent(group_id=group.id, creator_id=current_user.id, **fields)
+            db.session.add(event)
+            db.session.flush()  # assigns event.id
+            db.session.add(
+                GroupPost(group_id=group.id, author_id=current_user.id, kind="event", event_id=event.id)
+            )
+            # The organizer is going by default.
+            db.session.add(EventRsvp(event_id=event.id, user_id=current_user.id, status="going"))
+            db.session.commit()
+            queued = _notify_new_event(group, event, current_user)
+            flash(
+                "Event created."
+                + (f" Emailing {queued} member{'' if queued == 1 else 's'} who opted in." if queued else ""),
+                "success",
+            )
+            return redirect(url_for("group_event", group_id=group.id, event_id=event.id))
+        return render_template(
+            "group_event_form.html",
+            group=group, me=me, event=None, form={}, can_settings=_can(me, "edit_group"),
+        )
+
+    @app.route("/groups/<int:group_id>/events/<int:event_id>")
+    @login_required
+    def group_event(group_id, event_id):
+        group, me = _require_member(group_id)
+        event = _get_event_or_404(group, event_id)
+        info = _event_info(event, current_user.id, _now_local())
+        by_status = {"going": [], "maybe": [], "no": []}
+        for r in sorted(event.rsvps, key=lambda r: r.id):
+            by_status.setdefault(r.status, []).append(r)
+        return render_template(
+            "group_event.html",
+            group=group,
+            me=me,
+            info=info,
+            going_list=by_status["going"],
+            maybe_list=by_status["maybe"],
+            no_list=by_status["no"],
+            can_manage=_can_manage_event(me, event),
+            can_settings=_can(me, "edit_group"),
+        )
+
+    @app.route("/groups/<int:group_id>/events/<int:event_id>/edit", methods=["GET", "POST"])
+    @login_required
+    def group_event_edit(group_id, event_id):
+        group, me = _require_member(group_id)
+        event = _get_event_or_404(group, event_id)
+        if not _can_manage_event(me, event):
+            abort(403)
+        if request.method == "POST":
+            fields, error = _event_fields_from_form()
+            if error:
+                flash(error, "error")
+                return render_template(
+                    "group_event_form.html",
+                    group=group, me=me, event=event, form=request.form,
+                    can_settings=_can(me, "edit_group"),
+                )
+            for key, value in fields.items():
+                setattr(event, key, value)
+            db.session.commit()
+            flash("Event updated.", "success")
+            return redirect(url_for("group_event", group_id=group.id, event_id=event.id))
+        form = {
+            "title": event.title,
+            "description": event.description or "",
+            "location": event.location or "",
+            "starts_at": event.starts_at.strftime("%Y-%m-%dT%H:%M"),
+            "capacity": event.capacity or "",
+        }
+        return render_template(
+            "group_event_form.html",
+            group=group, me=me, event=event, form=form, can_settings=_can(me, "edit_group"),
+        )
+
+    @app.route("/groups/<int:group_id>/events/<int:event_id>/manage/<action>", methods=["POST"])
+    @login_required
+    def group_event_manage(group_id, event_id, action):
+        group, me = _require_member(group_id)
+        event = _get_event_or_404(group, event_id)
+        if not _can_manage_event(me, event):
+            abort(403)
+        if action == "cancel":
+            event.cancelled = True
+            flash("Event cancelled. Members can still see it, but sign-ups are closed.", "success")
+        elif action == "restore":
+            event.cancelled = False
+            flash("Event restored.", "success")
+        elif action == "delete":
+            db.session.delete(event)
+            db.session.commit()
+            flash("Event deleted.", "success")
+            return redirect(url_for("group_events", group_id=group.id))
+        else:
+            abort(404)
+        db.session.commit()
+        return redirect(url_for("group_event", group_id=group.id, event_id=event.id))
+
+    @app.route("/groups/<int:group_id>/events/<int:event_id>/rsvp", methods=["POST"])
+    @login_required
+    def group_event_rsvp(group_id, event_id):
+        group, me = _require_member(group_id)
+        event = _get_event_or_404(group, event_id)
+        back = _safe_next(request.form.get("next")) or url_for(
+            "group_event", group_id=group.id, event_id=event.id
+        )
+        status = request.form.get("status", "")
+        if status not in ("going", "maybe", "no", "clear"):
+            abort(400)
+        if event.cancelled or event.starts_at < _now_local():
+            flash("Sign-ups are closed for this event.", "error")
+            return redirect(back)
+
+        existing = EventRsvp.query.filter_by(event_id=event.id, user_id=current_user.id).first()
+        if status == "clear":
+            if existing is not None:
+                db.session.delete(existing)
+                db.session.commit()
+            return redirect(back)
+
+        if status == "going" and event.capacity and (existing is None or existing.status != "going"):
+            going = EventRsvp.query.filter_by(event_id=event.id, status="going").count()
+            if going >= event.capacity:
+                flash("This event is full. You can mark Maybe instead.", "error")
+                return redirect(back)
+
+        if existing is None:
+            db.session.add(EventRsvp(event_id=event.id, user_id=current_user.id, status=status))
+        else:
+            existing.status = status
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()  # double-click race: the row already exists
+            flash("Couldn't save that just now, please try again.", "error")
+        return redirect(back)
 
     # ---------- JSON API (used by the flight-path canvas + multi-disc compare) ----------
 

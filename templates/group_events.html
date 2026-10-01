@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% from "_macros.html" import social_tabs, group_banner, group_nav, event_card %}
+{% block title %}{{ group.name }} Events — DiscTrack{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Social</h1>
+  <a href="{{ url_for('groups_home') }}" class="btn btn-ghost">← All groups</a>
+</div>
+{{ social_tabs('groups') }}
+
+<div class="group-title-row">
+  <h2 class="group-title">{{ group.name }}</h2>
+</div>
+{{ group_nav(group, 'events', can_settings) }}
+
+<div class="events-toolbar">
+  <h2>Upcoming</h2>
+  {% if can_create_events %}
+  <a href="{{ url_for('group_event_new', group_id=group.id) }}" class="btn btn-primary">+ Suggest an event</a>
+  {% endif %}
+</div>
+{% if not upcoming %}
+<p class="hint">No upcoming events{% if can_create_events %}. Suggest one!{% elif group.event_policy == 'selected' %}. The owner chooses who can suggest events.{% endif %}</p>
+{% else %}
+<div class="event-list">
+  {% for info in upcoming %}{{ event_card(group, info, request.path) }}{% endfor %}
+</div>
+{% endif %}
+
+{% if past %}
+<details class="past-events">
+  <summary>Past events ({{ past|length }})</summary>
+  <div class="event-list">
+    {% for info in past %}{{ event_card(group, info, request.path) }}{% endfor %}
+  </div>
+</details>
+{% endif %}
+{% endblock %}

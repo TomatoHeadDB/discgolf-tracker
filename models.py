@@ -202,6 +202,12 @@ class Group(db.Model):
     members = db.relationship(
         "GroupMember", backref="group", lazy=True, cascade="all, delete-orphan"
     )
+    events = db.relationship(
+        "GroupEvent", backref="group", lazy=True, cascade="all, delete-orphan"
+    )
+    posts = db.relationship(
+        "GroupPost", backref="group", lazy=True, cascade="all, delete-orphan"
+    )
 
     @property
     def active_member_count(self):
@@ -240,3 +246,82 @@ class GroupMember(db.Model):
         "User",
         backref=db.backref("group_memberships", lazy=True, cascade="all, delete-orphan"),
     )
+
+
+class GroupEvent(db.Model):
+    """A play session a member proposes for the group. Members sign up with
+    an RSVP (going / maybe / can't go); an optional capacity limits how many
+    can be 'going'. starts_at is stored as the local wall-clock time the
+    organizer typed (no timezone conversion; see APP_TIMEZONE)."""
+
+    __tablename__ = "group_events"
+
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey("disc_groups.id"), nullable=False, index=True)
+    creator_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+
+    title = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    location = db.Column(db.String(200), nullable=True)
+    starts_at = db.Column(db.DateTime, nullable=False, index=True)
+    capacity = db.Column(db.Integer, nullable=True)  # None = no limit
+    cancelled = db.Column(db.Boolean, nullable=False, default=False)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    creator = db.relationship("User", foreign_keys=[creator_id])
+    rsvps = db.relationship(
+        "EventRsvp", backref="event", lazy=True, cascade="all, delete-orphan"
+    )
+    # The feed entry announcing this event goes away with the event. Plain
+    # "all" (no delete-orphan): GroupPost already has one delete-orphan
+    # parent (Group.posts) and regular posts have no event.
+    feed_posts = db.relationship("GroupPost", backref="event", lazy=True, cascade="all")
+
+
+class EventRsvp(db.Model):
+    __tablename__ = "event_rsvps"
+    __table_args__ = (db.UniqueConstraint("event_id", "user_id", name="uq_event_rsvp"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.Integer, db.ForeignKey("group_events.id"), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    status = db.Column(db.String(10), nullable=False)  # going | maybe | no
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    user = db.relationship("User", foreign_keys=[user_id])
+
+
+class GroupPost(db.Model):
+    """An entry in a group's feed: either a member's text post (kind
+    'post') or the announcement of a new event (kind 'event')."""
+
+    __tablename__ = "group_posts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey("disc_groups.id"), nullable=False, index=True)
+    author_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    kind = db.Column(db.String(20), nullable=False, default="post")  # post | event
+    body = db.Column(db.Text, nullable=True)
+    event_id = db.Column(db.Integer, db.ForeignKey("group_events.id"), nullable=True, index=True)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+    author = db.relationship("User", foreign_keys=[author_id])
+    comments = db.relationship(
+        "GroupComment",
+        backref="post",
+        lazy=True,
+        cascade="all, delete-orphan",
+        order_by="GroupComment.id",
+    )
+
+
+class GroupComment(db.Model):
+    __tablename__ = "group_comments"
+
+    id = db.Column(db.Integer, primary_key=True)
+    post_id = db.Column(db.Integer, db.ForeignKey("group_posts.id"), nullable=False, index=True)
+    author_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    body = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    author = db.relationship("User", foreign_keys=[author_id])

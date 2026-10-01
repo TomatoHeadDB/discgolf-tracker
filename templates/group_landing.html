@@ -29,6 +29,9 @@
   {% else %}
   <form method="POST" action="{{ url_for('group_join', group_id=group.id) }}">
     {% if code %}<input type="hidden" name="code" value="{{ code }}">{% endif %}
+    <label class="checkbox-label">
+      <input type="checkbox" name="email_notify"> Email me when members suggest events
+    </label>
     <button type="submit" class="btn btn-primary">{{ 'Join group' if group.join_mode == 'open' else 'Request to join' }}</button>
   </form>
   {% endif %}

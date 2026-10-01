@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import social_tabs, group_banner, group_nav %}
+{% from "_macros.html" import avatar, social_tabs, group_banner, group_nav, event_card %}
 {% block title %}{{ group.name }} — DiscTrack{% endblock %}
 {% block content %}
 <div class="page-header">
@@ -15,48 +15,70 @@
   {% if me.role == 'owner' %}<span class="badge-chip badge-owner">Owner</span>
   {% elif me.role == 'admin' %}<span class="badge-chip">Admin</span>{% endif %}
 </div>
-{{ group_nav(group, 'overview', can_settings) }}
+{{ group_nav(group, 'feed', can_settings) }}
 
-<div class="account-layout">
-  <div class="account-card">
-    <h3>About</h3>
-    {% if group.description %}
-    <p class="group-description">{{ group.description }}</p>
-    {% else %}
-    <p class="hint" style="margin-top:0">No description yet.</p>
-    {% endif %}
-    <p class="group-card-meta">
-      {{ group.active_member_count }} member{{ '' if group.active_member_count == 1 else 's' }}
-      {% if group.advertise_region and group.state %} · {% if group.county %}{{ group.county }}, {% endif %}{{ group.state }}{% endif %}
-    </p>
-    {% if can_invite %}
-    <label>Invite link
-      <input type="text" readonly value="{{ url_for('group_invite', code=group.invite_code, _external=True) }}" onclick="this.select()">
-    </label>
-    <p class="hint">Anyone logged in to DiscTrack with this link can {{ 'join' if group.join_mode == 'open' else 'request to join' }}, even if the group isn't advertised.{% if me.role == 'owner' %} You can reset it in Settings.{% endif %}</p>
-    {% endif %}
+<form method="POST" action="{{ url_for('group_post_create', group_id=group.id) }}" class="composer">
+  <textarea name="body" rows="3" maxlength="2000" placeholder="Share an update with the group..." required></textarea>
+  <div class="composer-actions">
+    {% if can_create_events %}<a href="{{ url_for('group_event_new', group_id=group.id) }}" class="btn btn-ghost">+ Suggest an event</a>{% endif %}
+    <button type="submit" class="btn btn-primary">Post</button>
   </div>
+</form>
 
-  <div class="account-card">
-    <h3>My preferences for this group</h3>
-    <form method="POST" action="{{ url_for('group_prefs', group_id=group.id) }}">
-      <label class="checkbox-label">
-        <input type="checkbox" name="share_scores" {% if me.share_scores %}checked{% endif %}>
-        Share my logged rounds with this group
-      </label>
-      <p class="hint">Off by default. When on, your scores count toward this group's shared scores and leaderboards. Only you can turn this on.</p>
-      <label class="checkbox-label">
-        <input type="checkbox" name="email_notify" {% if me.email_notify %}checked{% endif %}>
-        Email me when members suggest events
-      </label>
-      <p class="hint">Saved now; event emails start once group events are added.</p>
-      <button type="submit" class="btn btn-primary">Save</button>
-    </form>
-    {% if me.role != 'owner' %}
-    <form method="POST" action="{{ url_for('group_leave', group_id=group.id) }}" class="leave-form" onsubmit="return confirm('Leave this group?');">
-      <button type="submit" class="btn btn-small btn-danger">Leave group</button>
+{% if not items %}
+<p class="hint">Nothing here yet. Post the first update{% if can_create_events %} or suggest an event{% endif %}.</p>
+{% endif %}
+
+{% for item in items %}
+{% set post = item.post %}
+<article class="feed-post">
+  <header class="feed-post-head">
+    {{ avatar(post.author, "sm") }}
+    <a href="{{ url_for('public_profile', username=post.author.username) }}">{{ post.author.username }}</a>
+    <span class="feed-time">{{ post.created_at|local_dt }}</span>
+    {% if item.can_delete %}
+    <form method="POST" action="{{ url_for('group_post_delete', group_id=group.id, post_id=post.id) }}" class="inline-form feed-delete" onsubmit="return confirm('Delete this post?');">
+      <button type="submit" class="link-button">Delete</button>
     </form>
     {% endif %}
+  </header>
+
+  {% if post.kind == 'event' and item.event_info %}
+  <p class="feed-event-note">suggested an event</p>
+  {{ event_card(group, item.event_info, request.path) }}
+  {% else %}
+  <p class="post-body">{{ post.body }}</p>
+  {% endif %}
+
+  <div class="comments">
+    {% for c in item.comments %}
+    <div class="comment">
+      {{ avatar(c.comment.author, "sm") }}
+      <div class="comment-main">
+        <div class="comment-meta">
+          <a href="{{ url_for('public_profile', username=c.comment.author.username) }}">{{ c.comment.author.username }}</a>
+          <span class="feed-time">{{ c.comment.created_at|local_dt }}</span>
+          {% if c.can_delete %}
+          <form method="POST" action="{{ url_for('group_comment_delete', group_id=group.id, comment_id=c.comment.id) }}" class="inline-form feed-delete">
+            <input type="hidden" name="next" value="{{ request.full_path }}">
+            <button type="submit" class="link-button">Delete</button>
+          </form>
+          {% endif %}
+        </div>
+        <p class="comment-body">{{ c.comment.body }}</p>
+      </div>
+    </div>
+    {% endfor %}
+    <form method="POST" action="{{ url_for('group_comment_create', group_id=group.id, post_id=post.id) }}" class="comment-form">
+      <input type="hidden" name="next" value="{{ request.full_path }}">
+      <input type="text" name="body" maxlength="1000" placeholder="Write a comment..." required>
+      <button type="submit" class="btn btn-small btn-ghost">Comment</button>
+    </form>
   </div>
-</div>
+</article>
+{% endfor %}
+
+{% if has_more %}
+<p><a class="btn btn-ghost" href="{{ url_for('group_view', group_id=group.id, before=next_before) }}">Older posts</a></p>
+{% endif %}
 {% endblock %}

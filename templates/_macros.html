@@ -27,12 +27,57 @@
 {%- endif %}
 {%- endmacro %}
 
-{# Overview | Members | Settings tabs inside a group #}
+{# Feed | Events | Members | About | Settings tabs inside a group #}
 {% macro group_nav(group, active, can_settings) -%}
 <div class="sub-tabs">
-  <a class="sub-tab {{ 'sub-tab-active' if active == 'overview' else '' }}" href="{{ url_for('group_view', group_id=group.id) }}">Overview</a>
+  <a class="sub-tab {{ 'sub-tab-active' if active == 'feed' else '' }}" href="{{ url_for('group_view', group_id=group.id) }}">Feed</a>
+  <a class="sub-tab {{ 'sub-tab-active' if active == 'events' else '' }}" href="{{ url_for('group_events', group_id=group.id) }}">Events</a>
   <a class="sub-tab {{ 'sub-tab-active' if active == 'members' else '' }}" href="{{ url_for('group_members', group_id=group.id) }}">Members</a>
+  <a class="sub-tab {{ 'sub-tab-active' if active == 'about' else '' }}" href="{{ url_for('group_about', group_id=group.id) }}">About</a>
   {% if can_settings %}<a class="sub-tab {{ 'sub-tab-active' if active == 'settings' else '' }}" href="{{ url_for('group_settings', group_id=group.id) }}">Settings</a>{% endif %}
+</div>
+{%- endmacro %}
+
+{# Going / Maybe / Can't go buttons. info comes from the server (_event_info). #}
+{% macro rsvp_buttons(group, info, next_url) -%}
+{% if info.open %}
+<div class="rsvp-row">
+  {% for status, label in [('going', 'Going'), ('maybe', 'Maybe'), ('no', "Can't go")] %}
+  <form method="POST" action="{{ url_for('group_event_rsvp', group_id=group.id, event_id=info.event.id) }}" class="inline-form">
+    <input type="hidden" name="status" value="{{ status }}">
+    <input type="hidden" name="next" value="{{ next_url }}">
+    <button type="submit" class="btn btn-small {{ 'btn-primary' if info.my_status == status else 'btn-ghost' }}">{{ label }}</button>
+  </form>
+  {% endfor %}
+  {% if info.my_status %}
+  <form method="POST" action="{{ url_for('group_event_rsvp', group_id=group.id, event_id=info.event.id) }}" class="inline-form">
+    <input type="hidden" name="status" value="clear">
+    <input type="hidden" name="next" value="{{ next_url }}">
+    <button type="submit" class="btn btn-small btn-ghost">Clear</button>
+  </form>
+  {% endif %}
+</div>
+{% elif info.event.cancelled %}
+<p class="hint" style="margin:0">This event was cancelled.</p>
+{% else %}
+<p class="hint" style="margin:0">Sign-ups are closed.</p>
+{% endif %}
+{%- endmacro %}
+
+{# Compact event summary with RSVP buttons, used in the feed and events list #}
+{% macro event_card(group, info, next_url) -%}
+{% set e = info.event %}
+<div class="event-card {{ 'event-cancelled' if e.cancelled else '' }}">
+  <div class="event-card-head">
+    <a class="event-title" href="{{ url_for('group_event', group_id=group.id, event_id=e.id) }}">{{ e.title }}</a>
+    {% if e.cancelled %}<span class="badge-chip badge-alert">Cancelled</span>
+    {% elif info.past %}<span class="badge-chip">Past</span>
+    {% elif info.full %}<span class="badge-chip badge-alert">Full</span>{% endif %}
+  </div>
+  <p class="event-when">{{ e.starts_at|event_when }}</p>
+  {% if e.location %}<p class="event-where">{{ e.location }}</p>{% endif %}
+  <p class="event-counts">{{ info.going }} going{% if e.capacity %} of {{ e.capacity }} spots{% endif %}{% if info.maybe %} &middot; {{ info.maybe }} maybe{% endif %}</p>
+  {{ rsvp_buttons(group, info, next_url) }}
 </div>
 {%- endmacro %}
 
